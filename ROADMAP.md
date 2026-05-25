@@ -88,19 +88,20 @@ Definition of done:
 
 Output:
 
-- `service` route registry
-- local server runner
-- request/response runtime types
+- `service` route registry: started
+- local server runner: done for `users_api`
+- request/response runtime types: started
 - JSON decode/encode MVP
 - route params
 - API error mapping
 
 Definition of done:
 
-- `are run examples/users_api` starts a local HTTP server
-- `GET /health` returns `200`
-- `POST /users` creates an in-memory user
-- `GET /users/:id` returns that user or a typed error
+- `are run examples/users_api` starts a local HTTP server: done
+- `GET /health` returns `200`: done
+- `POST /users` creates an in-memory user: done
+- `GET /users/:id` returns that user or a typed error: done
+- function body interpreter replaces the temporary users API adapter
 
 ## Milestone 5: Backend Quality Loop
 

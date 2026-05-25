@@ -1,14 +1,10 @@
-use are_diagnostics::{Diagnostic, Severity};
-use are_lexer::lex_source;
-use are_parser::parse_tokens;
-use are_resolver::resolve_module;
-use are_typecheck::typecheck_module;
+use are_diagnostics::Diagnostic;
+use are_http_runtime::run_project;
+use are_project::check_path;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use walkdir::{DirEntry, WalkDir};
 
 #[derive(Debug, Parser)]
 #[command(name = "are")]
@@ -63,71 +59,32 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Run { path } => {
-            let status = run_check(&path, false);
-            if status != ExitCode::SUCCESS {
-                return status;
+            if let Err(err) = run_project(&path) {
+                eprintln!("{err}");
+                return ExitCode::FAILURE;
             }
 
-            println!(
-                "HTTP runtime is planned next; {} passed static checks",
-                path.display()
-            );
             ExitCode::SUCCESS
         }
     }
 }
 
 fn run_check(path: &Path, json: bool) -> ExitCode {
-    let files = match collect_are_files(path) {
-        Ok(files) => files,
+    let check = match check_path(path) {
+        Ok(check) => check,
         Err(err) => {
             eprintln!("{err}");
             return ExitCode::FAILURE;
         }
     };
 
-    let mut diagnostics = Vec::new();
-
-    for file in &files {
-        match fs::read_to_string(file) {
-            Ok(source) => {
-                let (tokens, mut file_diagnostics) = lex_source(file, &source);
-                if !file_diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.severity == Severity::Error)
-                {
-                    let (module, mut parse_diagnostics) = parse_tokens(file, &tokens);
-                    if parse_diagnostics.is_empty()
-                        && let Some(module) = module
-                    {
-                        let mut resolve_diagnostics = resolve_module(file, &module);
-                        let has_resolve_error = resolve_diagnostics
-                            .iter()
-                            .any(|diagnostic| diagnostic.severity == Severity::Error);
-                        file_diagnostics.append(&mut resolve_diagnostics);
-
-                        if !has_resolve_error {
-                            let mut type_diagnostics = typecheck_module(file, &module);
-                            file_diagnostics.append(&mut type_diagnostics);
-                        }
-                    }
-                    file_diagnostics.append(&mut parse_diagnostics);
-                }
-                diagnostics.append(&mut file_diagnostics);
-            }
-            Err(err) => diagnostics.push(read_error(file, &err.to_string())),
-        }
-    }
-
-    let ok = !diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.severity == Severity::Error);
+    let ok = check.ok();
 
     if json {
         let report = CheckReport {
             ok,
-            files_checked: files.len(),
-            diagnostics,
+            files_checked: check.files_checked,
+            diagnostics: check.diagnostics,
         };
 
         match serde_json::to_string_pretty(&report) {
@@ -138,9 +95,9 @@ fn run_check(path: &Path, json: bool) -> ExitCode {
             }
         }
     } else if ok {
-        println!("checked {} Arelang file(s)", files.len());
+        println!("checked {} Arelang file(s)", check.files_checked);
     } else {
-        for diagnostic in &diagnostics {
+        for diagnostic in &check.diagnostics {
             eprintln!("{diagnostic}");
         }
     }
@@ -150,51 +107,4 @@ fn run_check(path: &Path, json: bool) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
-}
-
-fn collect_are_files(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if path.is_file() {
-        return if path.extension().is_some_and(|extension| extension == "are") {
-            Ok(vec![path.to_path_buf()])
-        } else {
-            Err(format!("{} is not an .are file", path.display()))
-        };
-    }
-
-    if !path.exists() {
-        return Err(format!("{} does not exist", path.display()));
-    }
-
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(path)
-        .into_iter()
-        .filter_entry(should_descend)
-        .filter_map(Result::ok)
-    {
-        let entry_path = entry.path();
-        if entry_path.is_file() && entry_path.extension().is_some_and(|ext| ext == "are") {
-            files.push(entry_path.to_path_buf());
-        }
-    }
-
-    files.sort();
-    Ok(files)
-}
-
-fn should_descend(entry: &DirEntry) -> bool {
-    let name = entry.file_name().to_string_lossy();
-    !matches!(name.as_ref(), ".git" | "target")
-}
-
-fn read_error(file: &Path, reason: &str) -> Diagnostic {
-    use are_diagnostics::{Position, SourceRange};
-
-    Diagnostic::error(
-        "E_IO_0001",
-        file,
-        SourceRange::new(Position::new(1, 1), Position::new(1, 1)),
-        "failed to read source file",
-        reason,
-    )
 }

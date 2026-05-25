@@ -19,6 +19,13 @@ Expected result:
 - uses JSON request and response bodies
 - returns structured API errors
 
+Current implementation status:
+
+- `are run examples/users_api` starts a real local server
+- route registry comes from parsed and typechecked Arelang service declarations
+- function bodies are not interpreted yet
+- users API behavior is implemented by a temporary runtime adapter
+
 ## Handler Shape
 
 Handlers receive a typed context and request.

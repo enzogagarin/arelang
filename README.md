@@ -49,4 +49,14 @@ cargo run -p are-cli -- check examples/users_api --json
 cargo test
 ```
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The HTTP runtime is the next major piece.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The full function-body interpreter is the next major piece.
+
+`are run examples/users_api` now starts the first HTTP MVP server on `127.0.0.1:8080`. This runtime uses the checked service route registry plus a temporary users API adapter; executing arbitrary Arelang function bodies is still pending.
+
+```sh
+curl http://127.0.0.1:8080/health
+curl -X POST http://127.0.0.1:8080/users \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","name":"Ada"}'
+curl http://127.0.0.1:8080/users/1
+```

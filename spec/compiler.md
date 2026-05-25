@@ -22,8 +22,10 @@ crates/
   are-diagnostics/   human and JSON diagnostic data model
   are-lexer/         source text to token stream
   are-parser/        token stream to top-level AST
+  are-project/       manifest loading and reusable static check pipeline
   are-resolver/      top-level symbol binding and service route checks
   are-typecheck/     type arity, duplicate fields, and HTTP service contract checks
+  are-http-runtime/  first HTTP MVP server for checked service projects
 ```
 
 Next crates:
@@ -31,7 +33,6 @@ Next crates:
 ```text
 crates/
   are-runtime/
-  are-http-runtime/
 ```
 
 ## First Pass Pipeline
@@ -65,6 +66,14 @@ Current `are check` behavior:
 - resolve imports, declarations, service uses, and route handlers
 - typecheck function signatures, generic arity, route handlers, and HTTP error mappers
 - emit human or JSON diagnostics
+
+Current `are run` behavior:
+
+- load `are.toml`
+- require `target = "server"`
+- run static checks
+- extract the checked service route registry
+- start the users API HTTP MVP adapter
 
 ## Diagnostic Shape
 

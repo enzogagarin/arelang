@@ -1,0 +1,63 @@
+use std.http as Http
+use std.validate
+
+type UserId = opaque U64
+type Email = opaque String
+
+struct AppState {
+    users: UserStore
+}
+
+struct CreateUserInput {
+    email: String
+    name: String
+}
+
+struct User {
+    id: UserId
+    email: Email
+    name: String
+}
+
+enum ApiError {
+    InvalidInput(message: String)
+    NotFound
+    Internal(message: String)
+}
+
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
+    return Http.Response.ok({ "status": "ok" })
+}
+
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+    let input = req.json<CreateUserInput>()?
+
+    validate.email(input.email)?
+    validate.length(input.name, min: 2, max: 80)?
+
+    let user = ctx.state.users.insert(input)?
+    return Http.Response.created(user)
+}
+
+fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+    let id = ctx.param<UserId>("id")?
+    let user = ctx.state.users.get(id)?
+    return Http.Response.ok(user)
+}
+
+fn map_error(err: ApiError) -> Http.Response {
+    match err {
+        InvalidInput(message) => return Http.Response.error(400, { "error": message })
+        NotFound => return Http.Response.error(404, { "error": "not_found" })
+        Internal(message) => return Http.Response.error(500, { "error": message })
+    }
+}
+
+service UsersApi(state: AppState) {
+    use Http.error_map(map_error)
+
+    route GET "/health" -> health
+    route POST "/users" -> create_user
+    route GET "/users/:id" -> get_user
+}
+

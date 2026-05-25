@@ -1,0 +1,18 @@
+[package]
+name = "users-api"
+version = "0.1.0"
+target = "server"
+entry = "main.are"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[capabilities]
+network_listen = ["127.0.0.1:8080"]
+network_outbound = []
+filesystem_read = []
+filesystem_write = []
+env_read = []
+process_spawn = false
+

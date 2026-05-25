@@ -1,0 +1,15 @@
+[package]
+name = "are-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+are-diagnostics = { path = "../are-diagnostics" }
+serde = { version = "1.0", features = ["derive"] }
+
+[lints]
+workspace = true
+

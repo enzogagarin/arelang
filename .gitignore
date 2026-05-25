@@ -1,0 +1,13 @@
+/target/
+/.DS_Store
+**/.DS_Store
+
+# Local editor and OS noise
+.idea/
+.vscode/
+*.swp
+
+# Local environment
+.env
+.env.*
+

@@ -55,16 +55,19 @@ Definition of done:
 
 Output:
 
-- module/import resolution
-- nominal struct and enum types
-- function signatures
-- `Result<T, E>`
-- `Option<T>`
-- `?` propagation checks
+- module/import resolution: started
+- nominal struct and enum declaration checks: started
+- function signature checks: started
+- `Result<T, E>` arity checks: done
+- `Option<T>` arity checks: done
+- HTTP route handler signature checks: done
+- HTTP error mapper checks: done
+- `?` propagation checks: pending
 
 Definition of done:
 
 - invalid field names, unknown symbols, bad return types, and unhandled `Result` values are reported with stable diagnostic codes
+- `users_api` route handlers must use `(ctx: Http.Context<AppState>, req: Http.Request)` and return `Http.Response` or `Result<Http.Response, ApiError>`
 
 ## Milestone 3: Interpreter Core
 

@@ -23,14 +23,13 @@ crates/
   are-lexer/         source text to token stream
   are-parser/        token stream to top-level AST
   are-resolver/      top-level symbol binding and service route checks
+  are-typecheck/     type arity, duplicate fields, and HTTP service contract checks
 ```
 
 Next crates:
 
 ```text
 crates/
-  are-resolver/
-  are-typecheck/
   are-runtime/
   are-http-runtime/
 ```
@@ -64,6 +63,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
+- typecheck function signatures, generic arity, route handlers, and HTTP error mappers
 - emit human or JSON diagnostics
 
 ## Diagnostic Shape

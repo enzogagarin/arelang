@@ -2,6 +2,7 @@ use are_diagnostics::{Diagnostic, Severity};
 use are_lexer::lex_source;
 use are_parser::parse_tokens;
 use are_resolver::resolve_module;
+use are_typecheck::typecheck_module;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::fs;
@@ -68,7 +69,7 @@ fn main() -> ExitCode {
             }
 
             println!(
-                "HTTP runtime is planned next; {} passed lexical checks",
+                "HTTP runtime is planned next; {} passed static checks",
                 path.display()
             );
             ExitCode::SUCCESS
@@ -100,7 +101,15 @@ fn run_check(path: &Path, json: bool) -> ExitCode {
                         && let Some(module) = module
                     {
                         let mut resolve_diagnostics = resolve_module(file, &module);
+                        let has_resolve_error = resolve_diagnostics
+                            .iter()
+                            .any(|diagnostic| diagnostic.severity == Severity::Error);
                         file_diagnostics.append(&mut resolve_diagnostics);
+
+                        if !has_resolve_error {
+                            let mut type_diagnostics = typecheck_module(file, &module);
+                            file_diagnostics.append(&mut type_diagnostics);
+                        }
                     }
                     file_diagnostics.append(&mut parse_diagnostics);
                 }

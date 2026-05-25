@@ -68,6 +68,7 @@ dependencies = [
  "are-lexer",
  "are-parser",
  "are-resolver",
+ "are-typecheck",
  "clap",
  "serde",
  "serde_json",
@@ -106,6 +107,17 @@ dependencies = [
  "are-diagnostics",
  "are-lexer",
  "are-parser",
+]
+
+[[package]]
+name = "are-typecheck"
+version = "0.1.0"
+dependencies = [
+ "are-ast",
+ "are-diagnostics",
+ "are-lexer",
+ "are-parser",
+ "are-resolver",
 ]
 
 [[package]]

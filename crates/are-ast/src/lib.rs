@@ -94,6 +94,7 @@ pub struct ServiceDecl {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ServiceUse {
     pub target: Path,
+    pub args: Vec<Path>,
     pub range: SourceRange,
 }
 

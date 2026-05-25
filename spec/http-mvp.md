@@ -27,6 +27,23 @@ Handlers receive a typed context and request.
 fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError>
 ```
 
+The first type checker accepts either:
+
+```are
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError>
+```
+
+Routes returning `Result<Http.Response, E>` require one service-level mapper:
+
+```are
+fn map_error(err: ApiError) -> Http.Response
+
+service UsersApi(state: AppState) {
+    use Http.error_map(map_error)
+}
+```
+
 The context carries:
 
 - app state
@@ -49,6 +66,8 @@ The compiler should check:
 
 - handler exists
 - handler has a valid HTTP signature
+- handler returns `Http.Response` or `Result<Http.Response, E>`
+- result-returning handlers have a compatible `Http.error_map`
 - route params are available to the handler through `ctx.param<T>("name")`
 - duplicate method/path pairs are rejected
 
@@ -107,4 +126,3 @@ fn map_error(err: ApiError) -> Http.Response
 ```
 
 This is simpler than a magical framework mapper for v0 and easier for the compiler to support.
-

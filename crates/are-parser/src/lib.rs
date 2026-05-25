@@ -261,15 +261,33 @@ impl<'a> Parser<'a> {
     fn parse_service_use(&mut self) -> Option<ServiceUse> {
         let start = self.previous_range()?.start;
         let target = self.parse_path()?;
+        let mut args = Vec::new();
         if self.match_kind(&TokenKind::LeftParen).is_some() {
-            self.skip_balanced_parens()?;
+            args = self.parse_service_use_args()?;
         }
         let end = self.previous_range()?.end;
 
         Some(ServiceUse {
             target,
+            args,
             range: SourceRange::new(start, end),
         })
+    }
+
+    fn parse_service_use_args(&mut self) -> Option<Vec<Path>> {
+        let mut args = Vec::new();
+
+        if !self.check_kind(&TokenKind::RightParen) {
+            loop {
+                args.push(self.parse_path()?);
+                if self.match_kind(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+
+        self.expect_kind(&TokenKind::RightParen, "expected `)` after service use")?;
+        Some(args)
     }
 
     fn parse_route(&mut self) -> Option<RouteDecl> {
@@ -418,35 +436,6 @@ impl<'a> Parser<'a> {
             SourceRange::new(start, start),
             "unterminated block",
             "function bodies must end with a matching `}`",
-        ));
-        None
-    }
-
-    fn skip_balanced_parens(&mut self) -> Option<()> {
-        let start = self.previous_range()?.start;
-        let mut depth = 1usize;
-
-        while !self.at_eof() {
-            let token = self.advance();
-            match token.kind {
-                TokenKind::LeftParen => depth += 1,
-                TokenKind::RightParen => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(());
-                    }
-                }
-                TokenKind::Eof => break,
-                _ => {}
-            }
-        }
-
-        self.diagnostics.push(Diagnostic::error(
-            "E_PARSE_0004",
-            &self.file,
-            SourceRange::new(start, start),
-            "unterminated call",
-            "service use calls must end with a matching `)`",
         ));
         None
     }
@@ -636,6 +625,9 @@ mod tests {
         };
 
         assert_eq!(service.routes.len(), 2);
+        assert_eq!(service.uses.len(), 1);
+        assert_eq!(service.uses[0].target.segments, ["Http", "error_map"]);
+        assert_eq!(service.uses[0].args[0].segments, ["map_error"]);
         assert_eq!(service.routes[0].method, "GET");
         assert_eq!(service.routes[0].path, "/health");
     }

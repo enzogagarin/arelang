@@ -1,4 +1,5 @@
-use are_ast::{Item, Module, RouteDecl, ServiceDecl};
+use are_ast::{FunctionDecl, Item, Module, RouteDecl, ServiceDecl};
+use are_interpreter::{Value as InterpretedValue, interpret_function};
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -71,6 +72,7 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
 
     let service = find_single_service(&check.modules)?;
     let routes = RuntimeRoutes::from_service(service)?;
+    let functions = RuntimeFunctions::from_modules(&check.modules);
     let server_config = manifest.server.clone().ok_or_else(|| {
         RuntimeError::UnsupportedProject("server target requires [server] config".into())
     })?;
@@ -87,15 +89,21 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
         println!("  {} {}", route.method, route.path);
     }
 
-    run_users_api_server(&server, &routes, &root, &manifest);
+    run_users_api_server(&server, &routes, &functions, &root, &manifest);
     Ok(())
 }
 
-fn run_users_api_server(server: &Server, routes: &RuntimeRoutes, root: &Path, manifest: &Manifest) {
+fn run_users_api_server(
+    server: &Server,
+    routes: &RuntimeRoutes,
+    functions: &RuntimeFunctions,
+    root: &Path,
+    manifest: &Manifest,
+) {
     let state = UsersApiState::default();
 
     for request in server.incoming_requests() {
-        let result = handle_tiny_request(request, &state, routes);
+        let result = handle_tiny_request(request, &state, routes, functions);
         if let Err(err) = result {
             eprintln!(
                 "request handling failed for {} at {}: {err}",
@@ -110,6 +118,7 @@ fn handle_tiny_request(
     mut request: Request,
     state: &UsersApiState,
     routes: &RuntimeRoutes,
+    functions: &RuntimeFunctions,
 ) -> Result<(), RuntimeError> {
     let method = request.method().clone();
     let url = request.url().to_string();
@@ -119,7 +128,7 @@ fn handle_tiny_request(
         .read_to_string(&mut body)
         .map_err(|err| RuntimeError::Server(format!("failed to read request body: {err}")))?;
 
-    let response = users_api_response(state, routes, &method, &url, &body);
+    let response = users_api_response(state, routes, functions, &method, &url, &body);
     request
         .respond(json_response(response.status, &response.body))
         .map_err(|err| RuntimeError::Server(format!("failed to write response: {err}")))
@@ -135,6 +144,11 @@ struct RuntimeRoute {
     method: String,
     path: String,
     handler: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RuntimeFunctions {
+    functions: HashMap<String, FunctionDecl>,
 }
 
 impl RuntimeRoutes {
@@ -165,6 +179,28 @@ impl RuntimeRoutes {
 
             match_route(&route.path, path).map(|params| (route.handler.as_str(), params))
         })
+    }
+}
+
+impl RuntimeFunctions {
+    fn from_modules(modules: &[are_project::CheckedFile]) -> Self {
+        let functions = modules
+            .iter()
+            .flat_map(|file| file.module.items.iter())
+            .filter_map(|item| {
+                if let Item::Function(function) = item {
+                    Some((function.name.clone(), function.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Self { functions }
+    }
+
+    fn get(&self, name: &str) -> Option<&FunctionDecl> {
+        self.functions.get(name)
     }
 }
 
@@ -242,6 +278,7 @@ struct RuntimeResponse {
 fn users_api_response(
     state: &UsersApiState,
     routes: &RuntimeRoutes,
+    functions: &RuntimeFunctions,
     method: &Method,
     url: &str,
     body: &str,
@@ -252,13 +289,28 @@ fn users_api_response(
     };
 
     match handler {
-        "health" => RuntimeResponse {
-            status: 200,
-            body: serde_json::json!({ "status": "ok" }),
-        },
+        "health" => interpreted_response(functions, handler),
         "create_user" => create_user(state, body),
         "get_user" => get_user(state, &params),
         _ => error_response(500, "unsupported_handler"),
+    }
+}
+
+fn interpreted_response(functions: &RuntimeFunctions, handler: &str) -> RuntimeResponse {
+    let Some(function) = functions.get(handler) else {
+        return error_response(500, "handler_not_found");
+    };
+
+    match interpret_function(function) {
+        Ok(InterpretedValue::HttpResponse(response)) => RuntimeResponse {
+            status: response.status,
+            body: response.body,
+        },
+        Ok(InterpretedValue::Json(_)) => error_response(500, "handler_returned_json"),
+        Err(err) => {
+            eprintln!("Arelang interpreter failed in `{handler}`: {err}");
+            error_response(500, "interpreter_error")
+        }
     }
 }
 
@@ -376,7 +428,9 @@ fn match_route(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeRoutes, UsersApiState, match_route, users_api_response};
+    use super::{RuntimeFunctions, RuntimeRoutes, UsersApiState, match_route, users_api_response};
+    use are_project::check_path;
+    use std::path::Path;
     use tiny_http::Method;
 
     #[test]
@@ -395,22 +449,31 @@ mod tests {
                 route("GET", "/users/:id", "get_user"),
             ],
         };
+        let functions = users_api_functions();
 
-        let health = users_api_response(&state, &routes, &Method::Get, "/health", "");
+        let health = users_api_response(&state, &routes, &functions, &Method::Get, "/health", "");
         assert_eq!(health.status, 200);
+        assert_eq!(health.body["status"], "ok");
 
         let created = users_api_response(
             &state,
             &routes,
+            &functions,
             &Method::Post,
             "/users",
             r#"{"email":"ada@example.com","name":"Ada"}"#,
         );
         assert_eq!(created.status, 201);
 
-        let fetched = users_api_response(&state, &routes, &Method::Get, "/users/1", "");
+        let fetched = users_api_response(&state, &routes, &functions, &Method::Get, "/users/1", "");
         assert_eq!(fetched.status, 200);
         assert_eq!(fetched.body["email"], "ada@example.com");
+    }
+
+    fn users_api_functions() -> RuntimeFunctions {
+        let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
+        assert!(check.ok(), "{:#?}", check.diagnostics);
+        RuntimeFunctions::from_modules(&check.modules)
     }
 
     fn route(method: &str, path: &str, handler: &str) -> super::RuntimeRoute {

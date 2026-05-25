@@ -4,6 +4,7 @@ members = [
     "crates/are-cli",
     "crates/are-diagnostics",
     "crates/are-lexer",
+    "crates/are-interpreter",
     "crates/are-parser",
     "crates/are-project",
     "crates/are-resolver",

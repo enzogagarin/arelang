@@ -65,8 +65,25 @@ pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
-    pub body: RawBlock,
+    pub body: FunctionBody,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FunctionBody {
+    Parsed { block: Block },
+    Raw { block: RawBlock },
+}
+
+impl FunctionBody {
+    #[must_use]
+    pub const fn range(&self) -> SourceRange {
+        match self {
+            Self::Parsed { block } => block.range,
+            Self::Raw { block } => block.range,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,6 +96,67 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RawBlock {
     pub token_count: usize,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Block {
+    pub statements: Vec<Stmt>,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Stmt {
+    Return { value: Expr, range: SourceRange },
+}
+
+impl Stmt {
+    #[must_use]
+    pub const fn range(&self) -> SourceRange {
+        match self {
+            Self::Return { range, .. } => *range,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Expr {
+    String {
+        value: String,
+        range: SourceRange,
+    },
+    Object {
+        fields: Vec<ObjectField>,
+        range: SourceRange,
+    },
+    Call {
+        callee: Path,
+        args: Vec<Expr>,
+        range: SourceRange,
+    },
+    Path {
+        path: Path,
+    },
+}
+
+impl Expr {
+    #[must_use]
+    pub const fn range(&self) -> SourceRange {
+        match self {
+            Self::String { range, .. } | Self::Object { range, .. } | Self::Call { range, .. } => {
+                *range
+            }
+            Self::Path { path } => path.range,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ObjectField {
+    pub key: String,
+    pub value: Expr,
     pub range: SourceRange,
 }
 

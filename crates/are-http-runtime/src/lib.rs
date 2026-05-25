@@ -1,7 +1,9 @@
 use are_ast::{FunctionDecl, Item, Module, RouteDecl, ServiceDecl};
-use are_interpreter::{Value as InterpretedValue, interpret_function};
+use are_interpreter::{
+    Host, InterpretError, Value as InterpretedValue, interpret_function_with_host,
+};
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -263,12 +265,6 @@ struct User {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateUserInput {
-    email: String,
-    name: String,
-}
-
 #[derive(Debug)]
 struct RuntimeResponse {
     status: u16,
@@ -289,58 +285,132 @@ fn users_api_response(
     };
 
     match handler {
-        "health" => interpreted_response(functions, handler),
-        "create_user" => create_user(state, body),
+        "health" | "create_user" => interpreted_response(state, functions, handler, body),
         "get_user" => get_user(state, &params),
         _ => error_response(500, "unsupported_handler"),
     }
 }
 
-fn interpreted_response(functions: &RuntimeFunctions, handler: &str) -> RuntimeResponse {
+fn interpreted_response(
+    state: &UsersApiState,
+    functions: &RuntimeFunctions,
+    handler: &str,
+    body: &str,
+) -> RuntimeResponse {
     let Some(function) = functions.get(handler) else {
         return error_response(500, "handler_not_found");
     };
+    let mut host = UsersApiHost {
+        state,
+        request_body: body,
+    };
 
-    match interpret_function(function) {
+    match interpret_function_with_host(function, &mut host) {
         Ok(InterpretedValue::HttpResponse(response)) => RuntimeResponse {
             status: response.status,
             body: response.body,
         },
         Ok(InterpretedValue::Json(_)) => error_response(500, "handler_returned_json"),
+        Ok(InterpretedValue::Unit) => error_response(500, "handler_returned_unit"),
         Err(err) => {
+            if let Some(response) = err.as_http_response() {
+                return RuntimeResponse {
+                    status: response.status,
+                    body: response.body.clone(),
+                };
+            }
+
             eprintln!("Arelang interpreter failed in `{handler}`: {err}");
             error_response(500, "interpreter_error")
         }
     }
 }
 
-fn create_user(state: &UsersApiState, body: &str) -> RuntimeResponse {
-    let Ok(input) = serde_json::from_str::<CreateUserInput>(body) else {
-        return error_response(400, "invalid_json");
-    };
+struct UsersApiHost<'a> {
+    state: &'a UsersApiState,
+    request_body: &'a str,
+}
 
-    if !input.email.contains('@') {
-        return error_response(400, "invalid_email");
+impl Host for UsersApiHost<'_> {
+    fn read_json_body(
+        &mut self,
+        type_name: Option<&str>,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let value = serde_json::from_str::<serde_json::Value>(self.request_body)
+            .map_err(|_| InterpretError::raised_json_error(400, "invalid_json"))?;
+
+        if type_name == Some("CreateUserInput") && !is_create_user_input(&value) {
+            return Err(InterpretError::raised_json_error(400, "invalid_json"));
+        }
+
+        Ok(value)
     }
 
-    let name_len = input.name.chars().count();
-    if !(2..=80).contains(&name_len) {
-        return error_response(400, "invalid_name");
+    fn validate_email(&mut self, value: &serde_json::Value) -> Result<(), InterpretError> {
+        let Some(email) = value.as_str() else {
+            return Err(InterpretError::raised_json_error(400, "invalid_email"));
+        };
+
+        if email.contains('@') {
+            return Ok(());
+        }
+
+        Err(InterpretError::raised_json_error(400, "invalid_email"))
     }
 
-    let mut inner = state.inner.lock().expect("users api state lock poisoned");
-    inner.next_id += 1;
-    let user = User {
-        id: inner.next_id,
-        email: input.email,
-        name: input.name,
-    };
-    inner.users.insert(user.id, user.clone());
+    fn validate_length(
+        &mut self,
+        value: &serde_json::Value,
+        min: i64,
+        max: i64,
+    ) -> Result<(), InterpretError> {
+        let Some(text) = value.as_str() else {
+            return Err(InterpretError::raised_json_error(400, "invalid_name"));
+        };
 
-    RuntimeResponse {
-        status: 201,
-        body: serde_json::to_value(user).expect("user serializes"),
+        let len = i64::try_from(text.chars().count()).map_err(|_| {
+            InterpretError::UnsupportedExpression("validate.length input is too large".into())
+        })?;
+        if (min..=max).contains(&len) {
+            return Ok(());
+        }
+
+        Err(InterpretError::raised_json_error(400, "invalid_name"))
     }
+
+    fn insert_user(
+        &mut self,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let email = input
+            .get("email")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| InterpretError::raised_json_error(400, "invalid_json"))?;
+        let name = input
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| InterpretError::raised_json_error(400, "invalid_json"))?;
+
+        let mut inner = self
+            .state
+            .inner
+            .lock()
+            .expect("users api state lock poisoned");
+        inner.next_id += 1;
+        let user = User {
+            id: inner.next_id,
+            email: email.to_string(),
+            name: name.to_string(),
+        };
+        inner.users.insert(user.id, user.clone());
+
+        Ok(serde_json::to_value(user).expect("user serializes"))
+    }
+}
+
+fn is_create_user_input(value: &serde_json::Value) -> bool {
+    value.get("email").is_some_and(serde_json::Value::is_string)
+        && value.get("name").is_some_and(serde_json::Value::is_string)
 }
 
 fn get_user(state: &UsersApiState, params: &HashMap<String, String>) -> RuntimeResponse {
@@ -464,6 +534,17 @@ mod tests {
             r#"{"email":"ada@example.com","name":"Ada"}"#,
         );
         assert_eq!(created.status, 201);
+
+        let invalid = users_api_response(
+            &state,
+            &routes,
+            &functions,
+            &Method::Post,
+            "/users",
+            r#"{"email":"invalid","name":"Ada"}"#,
+        );
+        assert_eq!(invalid.status, 400);
+        assert_eq!(invalid.body["error"], "invalid_email");
 
         let fetched = users_api_response(&state, &routes, &functions, &Method::Get, "/users/1", "");
         assert_eq!(fetched.status, 200);

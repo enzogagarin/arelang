@@ -49,9 +49,9 @@ cargo run -p are-cli -- check examples/users_api --json
 cargo test
 ```
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for simple `return` expressions such as object literals and `Http.Response.ok(...)` calls.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `?`, generic calls, object literals, field paths, and named arguments.
 
-`are run examples/users_api` now starts the first HTTP MVP server on `127.0.0.1:8080`. The `/health` route is executed from the Arelang `health` function body through the MVP interpreter. The `POST /users` and `GET /users/:id` handlers still use a temporary users API adapter while the richer function interpreter is built out.
+`are run examples/users_api` now starts the first HTTP MVP server on `127.0.0.1:8080`. The `/health` and `POST /users` routes are executed from their Arelang function bodies through the MVP interpreter. `GET /users/:id` still uses a temporary users API adapter while path params and state reads are moved into the interpreter.
 
 ```sh
 curl http://127.0.0.1:8080/health

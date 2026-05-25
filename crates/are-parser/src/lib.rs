@@ -1,5 +1,5 @@
 use are_ast::{
-    Block, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item, Module,
+    Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item, Module,
     ObjectField, Param, Path, RawBlock, RouteDecl, ServiceDecl, ServiceUse, Stmt, StructDecl,
     TypeDecl, TypeExpr, UseDecl,
 };
@@ -409,46 +409,122 @@ impl<'a> Parser<'a> {
             .range
             .start;
 
-        if self.check_keyword(Keyword::Return) {
-            return self.parse_return_block(start);
+        if self.can_start_statement() {
+            return self.parse_statement_block(start);
         }
 
         self.parse_raw_block_after_open(start)
             .map(|block| FunctionBody::Raw { block })
     }
 
-    fn parse_return_block(&mut self, block_start: Position) -> Option<FunctionBody> {
+    fn can_start_statement(&self) -> bool {
+        self.check_keyword(Keyword::Let)
+            || self.check_keyword(Keyword::Return)
+            || self.check_kind(&TokenKind::Identifier)
+    }
+
+    fn parse_statement_block(&mut self, block_start: Position) -> Option<FunctionBody> {
+        let mut statements = Vec::new();
+
+        while !self.at_eof() && !self.check_kind(&TokenKind::RightBrace) {
+            statements.push(self.parse_statement()?);
+        }
+
+        let block_end = self
+            .expect_kind(&TokenKind::RightBrace, "expected `}` after function body")?
+            .range
+            .end;
+
+        Some(FunctionBody::Parsed {
+            block: Block {
+                statements,
+                range: SourceRange::new(block_start, block_end),
+            },
+        })
+    }
+
+    fn parse_statement(&mut self) -> Option<Stmt> {
+        if self.check_keyword(Keyword::Let) {
+            return self.parse_let_statement();
+        }
+
+        if self.check_keyword(Keyword::Return) {
+            return self.parse_return_statement();
+        }
+
+        let value = self.parse_expr()?;
+        let range = value.range();
+        Some(Stmt::Expr { value, range })
+    }
+
+    fn parse_let_statement(&mut self) -> Option<Stmt> {
+        let start = self
+            .match_keyword(Keyword::Let)
+            .expect("let statement starts with let")
+            .start;
+        let name = self.expect_identifier("expected binding name after `let`")?;
+        self.expect_kind(&TokenKind::Equals, "expected `=` after binding name")?;
+        let value = self.parse_expr()?;
+        let end = value.range().end;
+
+        Some(Stmt::Let {
+            name,
+            value,
+            range: SourceRange::new(start, end),
+        })
+    }
+
+    fn parse_return_statement(&mut self) -> Option<Stmt> {
         let return_start = self
             .match_keyword(Keyword::Return)
             .expect("return block starts with return")
             .start;
         let value = self.parse_expr()?;
         let stmt_end = value.range().end;
-        let statement = Stmt::Return {
+        Some(Stmt::Return {
             value,
             range: SourceRange::new(return_start, stmt_end),
-        };
-        let block_end = self
-            .expect_kind(
-                &TokenKind::RightBrace,
-                "expected `}` after return statement",
-            )?
-            .range
-            .end;
-
-        Some(FunctionBody::Parsed {
-            block: Block {
-                statements: vec![statement],
-                range: SourceRange::new(block_start, block_end),
-            },
         })
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
+        let mut expr = self.parse_primary_expr()?;
+
+        while let Some(question) = self.match_kind(&TokenKind::Question) {
+            let range = SourceRange::new(expr.range().start, question.end);
+            expr = Expr::Try {
+                value: Box::new(expr),
+                range,
+            };
+        }
+
+        Some(expr)
+    }
+
+    fn parse_primary_expr(&mut self) -> Option<Expr> {
         if self.check_kind(&TokenKind::String) {
             let token = self.advance();
             return Some(Expr::String {
                 value: unquote(&token.lexeme),
+                range: token.range,
+            });
+        }
+
+        if self.check_kind(&TokenKind::Integer) {
+            let token = self.advance();
+            let Ok(value) = token.lexeme.parse::<i64>() else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_PARSE_0008",
+                    &self.file,
+                    token.range,
+                    "invalid integer literal",
+                    format!("could not parse `{}` as a 64-bit integer", token.lexeme),
+                ));
+                return None;
+            };
+
+            return Some(Expr::Integer {
+                value,
                 range: token.range,
             });
         }
@@ -514,14 +590,29 @@ impl<'a> Parser<'a> {
 
     fn parse_call_or_path_expr(&mut self) -> Option<Expr> {
         let path = self.parse_path()?;
+        let type_args = if self.match_operator("<") {
+            self.parse_call_type_args()?
+        } else {
+            Vec::new()
+        };
+
         if self.match_kind(&TokenKind::LeftParen).is_none() {
+            if !type_args.is_empty() {
+                self.error_at_current(
+                    "E_PARSE_0009",
+                    "expected call after generic arguments",
+                    format!("found `{}`", self.peek().lexeme),
+                );
+                return None;
+            }
+
             return Some(Expr::Path { path });
         }
 
         let mut args = Vec::new();
         if !self.check_kind(&TokenKind::RightParen) {
             loop {
-                args.push(self.parse_expr()?);
+                args.push(self.parse_call_arg()?);
                 if self.match_kind(&TokenKind::Comma).is_none() {
                     break;
                 }
@@ -536,7 +627,46 @@ impl<'a> Parser<'a> {
 
         Some(Expr::Call {
             callee: path,
+            type_args,
             args,
+            range,
+        })
+    }
+
+    fn parse_call_type_args(&mut self) -> Option<Vec<TypeExpr>> {
+        let mut args = Vec::new();
+        if !self.check_operator(">") {
+            loop {
+                args.push(self.parse_type_expr()?);
+                if self.match_kind(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect_operator(">", "expected `>` after call type arguments")?;
+        Some(args)
+    }
+
+    fn parse_call_arg(&mut self) -> Option<CallArg> {
+        if self.check_kind(&TokenKind::Identifier) && self.check_next_kind(&TokenKind::Colon) {
+            let start = self.peek().range.start;
+            let label = self.expect_identifier("expected argument label")?;
+            self.expect_kind(&TokenKind::Colon, "expected `:` after argument label")?;
+            let value = self.parse_expr()?;
+            let end = value.range().end;
+
+            return Some(CallArg {
+                label: Some(label),
+                value,
+                range: SourceRange::new(start, end),
+            });
+        }
+
+        let value = self.parse_expr()?;
+        let range = value.range();
+        Some(CallArg {
+            label: None,
+            value,
             range,
         })
     }
@@ -595,6 +725,12 @@ impl<'a> Parser<'a> {
 
     fn check_kind(&self, kind: &TokenKind) -> bool {
         &self.peek().kind == kind
+    }
+
+    fn check_next_kind(&self, kind: &TokenKind) -> bool {
+        self.tokens
+            .get(self.index + 1)
+            .is_some_and(|token| &token.kind == kind)
     }
 
     fn match_operator(&mut self, expected: &str) -> bool {
@@ -755,6 +891,24 @@ mod tests {
             panic!("health should return a response");
         };
         assert!(matches!(value, Expr::Call { .. }));
+
+        let create_user = module
+            .items
+            .iter()
+            .find_map(|item| {
+                if let Item::Function(function) = item {
+                    (function.name == "create_user").then_some(function)
+                } else {
+                    None
+                }
+            })
+            .expect("create_user function");
+        let FunctionBody::Parsed { block } = &create_user.body else {
+            panic!("create_user body should parse into statements");
+        };
+        assert_eq!(block.statements.len(), 5);
+        assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
+        assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
     }
 
     #[test]

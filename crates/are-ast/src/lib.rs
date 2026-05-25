@@ -108,14 +108,28 @@ pub struct Block {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Stmt {
-    Return { value: Expr, range: SourceRange },
+    Let {
+        name: String,
+        value: Expr,
+        range: SourceRange,
+    },
+    Expr {
+        value: Expr,
+        range: SourceRange,
+    },
+    Return {
+        value: Expr,
+        range: SourceRange,
+    },
 }
 
 impl Stmt {
     #[must_use]
     pub const fn range(&self) -> SourceRange {
         match self {
-            Self::Return { range, .. } => *range,
+            Self::Let { range, .. } | Self::Expr { range, .. } | Self::Return { range, .. } => {
+                *range
+            }
         }
     }
 }
@@ -127,13 +141,22 @@ pub enum Expr {
         value: String,
         range: SourceRange,
     },
+    Integer {
+        value: i64,
+        range: SourceRange,
+    },
     Object {
         fields: Vec<ObjectField>,
         range: SourceRange,
     },
     Call {
         callee: Path,
-        args: Vec<Expr>,
+        type_args: Vec<TypeExpr>,
+        args: Vec<CallArg>,
+        range: SourceRange,
+    },
+    Try {
+        value: Box<Expr>,
         range: SourceRange,
     },
     Path {
@@ -145,9 +168,11 @@ impl Expr {
     #[must_use]
     pub const fn range(&self) -> SourceRange {
         match self {
-            Self::String { range, .. } | Self::Object { range, .. } | Self::Call { range, .. } => {
-                *range
-            }
+            Self::String { range, .. }
+            | Self::Integer { range, .. }
+            | Self::Object { range, .. }
+            | Self::Call { range, .. }
+            | Self::Try { range, .. } => *range,
             Self::Path { path } => path.range,
         }
     }
@@ -156,6 +181,13 @@ impl Expr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ObjectField {
     pub key: String,
+    pub value: Expr,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CallArg {
+    pub label: Option<String>,
     pub value: Expr,
     pub range: SourceRange,
 }

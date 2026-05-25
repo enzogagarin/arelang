@@ -17,17 +17,17 @@ Reasons:
 
 ```text
 crates/
+  are-ast/           shared syntax tree data model
   are-cli/           CLI entry point; owns commands like check, run, fmt
   are-diagnostics/   human and JSON diagnostic data model
   are-lexer/         source text to token stream
+  are-parser/        token stream to top-level AST
 ```
 
 Next crates:
 
 ```text
 crates/
-  are-ast/
-  are-parser/
   are-resolver/
   are-typecheck/
   are-runtime/
@@ -57,6 +57,13 @@ are run examples/users_api
 
 `are check --json` is the AI-agent contract. Its schema must remain stable once parser diagnostics begin.
 
+Current `are check` behavior:
+
+- collect `.are` files
+- lex each file
+- parse top-level items into AST
+- emit human or JSON diagnostics
+
 ## Diagnostic Shape
 
 Diagnostics should include:
@@ -70,4 +77,3 @@ Diagnostics should include:
 - fixes
 
 Security-impacting fixes should not be automatically applied.
-

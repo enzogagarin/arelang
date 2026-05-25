@@ -31,6 +31,7 @@ pub enum TokenKind {
 #[serde(rename_all = "snake_case")]
 pub enum Keyword {
     Use,
+    As,
     Pub,
     Fn,
     Let,
@@ -359,6 +360,7 @@ impl<'a> Lexer<'a> {
 fn keyword(text: &str) -> Option<Keyword> {
     match text {
         "use" => Some(Keyword::Use),
+        "as" => Some(Keyword::As),
         "pub" => Some(Keyword::Pub),
         "fn" => Some(Keyword::Fn),
         "let" => Some(Keyword::Let),

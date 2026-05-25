@@ -41,10 +41,12 @@ are build --release
 
 ## Current Bootstrap Commands
 
-The repository currently includes the first Rust workspace and lexer-backed check command:
+The repository currently includes the first Rust workspace and syntax-backed check command:
 
 ```sh
 cargo run -p are-cli -- check examples/users_api
 cargo run -p are-cli -- check examples/users_api --json
 cargo test
 ```
+
+`are check` currently lexes and parses `.are` files. Type checking and the HTTP runtime are the next major pieces.

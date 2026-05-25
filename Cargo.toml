@@ -1,8 +1,10 @@
 [workspace]
 members = [
+    "crates/are-ast",
     "crates/are-cli",
     "crates/are-diagnostics",
     "crates/are-lexer",
+    "crates/are-parser",
 ]
 resolver = "2"
 
@@ -18,4 +20,3 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-

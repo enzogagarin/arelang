@@ -95,6 +95,7 @@ The compiler should build a route registry from this declaration.
 
 ```text
 use
+as
 pub
 fn
 let

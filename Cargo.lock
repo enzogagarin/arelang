@@ -53,11 +53,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "are-ast"
+version = "0.1.0"
+dependencies = [
+ "are-diagnostics",
+ "serde",
+]
+
+[[package]]
 name = "are-cli"
 version = "0.1.0"
 dependencies = [
  "are-diagnostics",
  "are-lexer",
+ "are-parser",
  "clap",
  "serde",
  "serde_json",
@@ -77,6 +86,15 @@ version = "0.1.0"
 dependencies = [
  "are-diagnostics",
  "serde",
+]
+
+[[package]]
+name = "are-parser"
+version = "0.1.0"
+dependencies = [
+ "are-ast",
+ "are-diagnostics",
+ "are-lexer",
 ]
 
 [[package]]

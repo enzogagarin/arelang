@@ -24,11 +24,12 @@ Definition of done:
 
 Output:
 
-- Rust workspace
-- `are check`
-- token stream tests
-- AST snapshot tests
-- parser recovery for common syntax errors
+- Rust workspace: done
+- `are check`: lexer + parser path done
+- token stream tests: done
+- AST model: done
+- parser tests for `users_api`: done
+- parser recovery for common syntax errors: started
 
 Initial language items:
 
@@ -133,4 +134,3 @@ Definition of done:
 - full sandbox runtime
 - package registry
 - self-hosting
-

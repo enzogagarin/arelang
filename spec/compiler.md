@@ -22,6 +22,7 @@ crates/
   are-diagnostics/   human and JSON diagnostic data model
   are-lexer/         source text to token stream
   are-parser/        token stream to top-level AST
+  are-resolver/      top-level symbol binding and service route checks
 ```
 
 Next crates:
@@ -62,6 +63,7 @@ Current `are check` behavior:
 - collect `.are` files
 - lex each file
 - parse top-level items into AST
+- resolve imports, declarations, service uses, and route handlers
 - emit human or JSON diagnostics
 
 ## Diagnostic Shape

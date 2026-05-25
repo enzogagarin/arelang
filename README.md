@@ -49,4 +49,4 @@ cargo run -p are-cli -- check examples/users_api --json
 cargo test
 ```
 
-`are check` currently lexes and parses `.are` files. Type checking and the HTTP runtime are the next major pieces.
+`are check` currently lexes, parses, and resolves top-level symbols in `.are` files. Type checking and the HTTP runtime are the next major pieces.

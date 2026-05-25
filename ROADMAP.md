@@ -29,6 +29,7 @@ Output:
 - token stream tests: done
 - AST model: done
 - parser tests for `users_api`: done
+- top-level resolver: done
 - parser recovery for common syntax errors: started
 
 Initial language items:
@@ -48,6 +49,7 @@ Definition of done:
 
 - `are check examples/users_api` parses all source files
 - syntax errors return human-readable and JSON diagnostics
+- duplicate declarations and missing route handlers return resolver diagnostics
 
 ## Milestone 2: Resolver And Type Checker
 

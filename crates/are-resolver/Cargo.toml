@@ -1,24 +1,19 @@
 [package]
-name = "are-cli"
+name = "are-resolver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "are"
-path = "src/main.rs"
-
 [dependencies]
+are-ast = { path = "../are-ast" }
 are-diagnostics = { path = "../are-diagnostics" }
+
+[dev-dependencies]
 are-lexer = { path = "../are-lexer" }
 are-parser = { path = "../are-parser" }
-are-resolver = { path = "../are-resolver" }
-clap = { version = "4.5", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-walkdir = "2.5"
 
 [lints]
 workspace = true
+

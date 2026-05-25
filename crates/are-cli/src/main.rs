@@ -1,6 +1,7 @@
 use are_diagnostics::{Diagnostic, Severity};
 use are_lexer::lex_source;
 use are_parser::parse_tokens;
+use are_resolver::resolve_module;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::fs;
@@ -94,7 +95,13 @@ fn run_check(path: &Path, json: bool) -> ExitCode {
                     .iter()
                     .any(|diagnostic| diagnostic.severity == Severity::Error)
                 {
-                    let (_module, mut parse_diagnostics) = parse_tokens(file, &tokens);
+                    let (module, mut parse_diagnostics) = parse_tokens(file, &tokens);
+                    if parse_diagnostics.is_empty()
+                        && let Some(module) = module
+                    {
+                        let mut resolve_diagnostics = resolve_module(file, &module);
+                        file_diagnostics.append(&mut resolve_diagnostics);
+                    }
                     file_diagnostics.append(&mut parse_diagnostics);
                 }
                 diagnostics.append(&mut file_diagnostics);

@@ -8,6 +8,8 @@ struct AppState {
     users: UserStore
 }
 
+struct UserStore {}
+
 struct CreateUserInput {
     email: String
     name: String
@@ -60,4 +62,3 @@ service UsersApi(state: AppState) {
     route POST "/users" -> create_user
     route GET "/users/:id" -> get_user
 }
-

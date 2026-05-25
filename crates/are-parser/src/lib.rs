@@ -610,7 +610,7 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
         let module = module.expect("module parses");
-        assert_eq!(module.items.len(), 13);
+        assert_eq!(module.items.len(), 14);
         assert!(matches!(module.items.last(), Some(Item::Service(_))));
     }
 

@@ -5,6 +5,7 @@ members = [
     "crates/are-diagnostics",
     "crates/are-lexer",
     "crates/are-parser",
+    "crates/are-resolver",
 ]
 resolver = "2"
 

@@ -1,6 +1,7 @@
 use are_ast::{FunctionDecl, Item, Module, RouteDecl, ServiceDecl};
 use are_interpreter::{
-    Host, InterpretError, Value as InterpretedValue, interpret_function_with_host,
+    Host, InterpretError, Value as InterpretedValue, interpret_function_with_host_and_args,
+    interpret_function_with_host_and_functions,
 };
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
 use serde::Serialize;
@@ -139,6 +140,7 @@ fn handle_tiny_request(
 #[derive(Debug, Clone)]
 struct RuntimeRoutes {
     routes: Vec<RuntimeRoute>,
+    error_mapper: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +158,7 @@ struct RuntimeFunctions {
 impl RuntimeRoutes {
     fn from_service(service: &ServiceDecl) -> Result<Self, RuntimeError> {
         let routes = service.routes.iter().map(runtime_route).collect::<Vec<_>>();
+        let error_mapper = runtime_error_mapper(service);
 
         if routes.is_empty() {
             return Err(RuntimeError::UnsupportedProject(format!(
@@ -164,7 +167,10 @@ impl RuntimeRoutes {
             )));
         }
 
-        Ok(Self { routes })
+        Ok(Self {
+            routes,
+            error_mapper,
+        })
     }
 
     fn handler_for(&self, method: &Method, path: &str) -> Option<(&str, HashMap<String, String>)> {
@@ -206,6 +212,21 @@ fn runtime_route(route: &RouteDecl) -> RuntimeRoute {
         path: route.path.clone(),
         handler: route.handler.segments.join("."),
     }
+}
+
+fn runtime_error_mapper(service: &ServiceDecl) -> Option<String> {
+    service.uses.iter().find_map(|service_use| {
+        let is_error_map = service_use
+            .target
+            .segments
+            .last()
+            .is_some_and(|segment| segment == "error_map");
+        if !is_error_map {
+            return None;
+        }
+
+        service_use.args.first().map(|path| path.segments.join("."))
+    })
 }
 
 fn find_single_service(modules: &[are_project::CheckedFile]) -> Result<&ServiceDecl, RuntimeError> {
@@ -272,12 +293,20 @@ fn runtime_response(
         return error_response(404, "not_found");
     };
 
-    interpreted_response(state, functions, handler, &params, body)
+    interpreted_response(
+        state,
+        functions,
+        routes.error_mapper.as_deref(),
+        handler,
+        &params,
+        body,
+    )
 }
 
 fn interpreted_response(
     state: &UsersApiState,
     functions: &RuntimeFunctions,
+    error_mapper: Option<&str>,
     handler: &str,
     params: &HashMap<String, String>,
     body: &str,
@@ -291,12 +320,13 @@ fn interpreted_response(
         request_body: body,
     };
 
-    match interpret_function_with_host(function, &mut host) {
+    match interpret_function_with_host_and_functions(function, &functions.functions, &mut host) {
         Ok(InterpretedValue::HttpResponse(response)) => RuntimeResponse {
             status: response.status,
             body: response.body,
         },
         Ok(InterpretedValue::Json(_)) => error_response(500, "handler_returned_json"),
+        Ok(InterpretedValue::Enum(_)) => error_response(500, "handler_returned_enum"),
         Ok(InterpretedValue::Unit) => error_response(500, "handler_returned_unit"),
         Err(err) => {
             if let Some(response) = err.as_http_response() {
@@ -306,8 +336,51 @@ fn interpreted_response(
                 };
             }
 
+            if let Some(error) = err.as_raised_error() {
+                return mapped_error_response(functions, error_mapper, &mut host, error.clone());
+            }
+
             eprintln!("Arelang interpreter failed in `{handler}`: {err}");
             error_response(500, "interpreter_error")
+        }
+    }
+}
+
+fn mapped_error_response(
+    functions: &RuntimeFunctions,
+    error_mapper: Option<&str>,
+    host: &mut UsersApiHost<'_>,
+    error: are_interpreter::EnumValue,
+) -> RuntimeResponse {
+    let Some(mapper_name) = error_mapper else {
+        eprintln!(
+            "Arelang application error {}.{} has no mapper",
+            error.enum_name, error.variant
+        );
+        return error_response(500, "error_mapper_missing");
+    };
+
+    let Some(mapper) = functions.get(mapper_name) else {
+        eprintln!("Arelang error mapper `{mapper_name}` was not found at runtime");
+        return error_response(500, "error_mapper_missing");
+    };
+
+    match interpret_function_with_host_and_args(
+        mapper,
+        &functions.functions,
+        host,
+        vec![InterpretedValue::Enum(error)],
+    ) {
+        Ok(InterpretedValue::HttpResponse(response)) => RuntimeResponse {
+            status: response.status,
+            body: response.body,
+        },
+        Ok(InterpretedValue::Json(_)) => error_response(500, "mapper_returned_json"),
+        Ok(InterpretedValue::Enum(_)) => error_response(500, "mapper_returned_enum"),
+        Ok(InterpretedValue::Unit) => error_response(500, "mapper_returned_unit"),
+        Err(err) => {
+            eprintln!("Arelang error mapper `{mapper_name}` failed: {err}");
+            error_response(500, "error_mapper_failed")
         }
     }
 }
@@ -324,10 +397,10 @@ impl Host for UsersApiHost<'_> {
         type_name: Option<&str>,
     ) -> Result<serde_json::Value, InterpretError> {
         let value = serde_json::from_str::<serde_json::Value>(self.request_body)
-            .map_err(|_| InterpretError::raised_json_error(400, "invalid_json"))?;
+            .map_err(|_| api_invalid_input("invalid_json"))?;
 
         if type_name == Some("CreateUserInput") && !is_create_user_input(&value) {
-            return Err(InterpretError::raised_json_error(400, "invalid_json"));
+            return Err(api_invalid_input("invalid_json"));
         }
 
         Ok(value)
@@ -335,14 +408,14 @@ impl Host for UsersApiHost<'_> {
 
     fn validate_email(&mut self, value: &serde_json::Value) -> Result<(), InterpretError> {
         let Some(email) = value.as_str() else {
-            return Err(InterpretError::raised_json_error(400, "invalid_email"));
+            return Err(api_invalid_input("invalid_email"));
         };
 
         if email.contains('@') {
             return Ok(());
         }
 
-        Err(InterpretError::raised_json_error(400, "invalid_email"))
+        Err(api_invalid_input("invalid_email"))
     }
 
     fn validate_length(
@@ -352,7 +425,7 @@ impl Host for UsersApiHost<'_> {
         max: i64,
     ) -> Result<(), InterpretError> {
         let Some(text) = value.as_str() else {
-            return Err(InterpretError::raised_json_error(400, "invalid_name"));
+            return Err(api_invalid_input("invalid_name"));
         };
 
         let len = i64::try_from(text.chars().count()).map_err(|_| {
@@ -362,7 +435,7 @@ impl Host for UsersApiHost<'_> {
             return Ok(());
         }
 
-        Err(InterpretError::raised_json_error(400, "invalid_name"))
+        Err(api_invalid_input("invalid_name"))
     }
 
     fn insert_user(
@@ -372,11 +445,11 @@ impl Host for UsersApiHost<'_> {
         let email = input
             .get("email")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| InterpretError::raised_json_error(400, "invalid_json"))?;
+            .ok_or_else(|| api_invalid_input("invalid_json"))?;
         let name = input
             .get("name")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| InterpretError::raised_json_error(400, "invalid_json"))?;
+            .ok_or_else(|| api_invalid_input("invalid_json"))?;
 
         let mut inner = self
             .state
@@ -400,13 +473,13 @@ impl Host for UsersApiHost<'_> {
         name: &str,
     ) -> Result<serde_json::Value, InterpretError> {
         let Some(value) = self.params.get(name) else {
-            return Err(InterpretError::raised_json_error(400, "missing_id"));
+            return Err(api_invalid_input("missing_id"));
         };
 
         if type_name == Some("UserId") {
             let id = value
                 .parse::<u64>()
-                .map_err(|_| InterpretError::raised_json_error(400, "invalid_id"))?;
+                .map_err(|_| api_invalid_input("invalid_id"))?;
             return Ok(serde_json::json!(id));
         }
 
@@ -415,7 +488,7 @@ impl Host for UsersApiHost<'_> {
 
     fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
         let Some(id) = id.as_u64() else {
-            return Err(InterpretError::raised_json_error(400, "invalid_id"));
+            return Err(api_invalid_input("invalid_id"));
         };
 
         let inner = self
@@ -424,7 +497,7 @@ impl Host for UsersApiHost<'_> {
             .lock()
             .expect("users api state lock poisoned");
         let Some(user) = inner.users.get(&id) else {
-            return Err(InterpretError::raised_json_error(404, "not_found"));
+            return Err(InterpretError::raised_api_error("NotFound", Vec::new()));
         };
 
         Ok(serde_json::to_value(user).expect("user serializes"))
@@ -441,6 +514,13 @@ fn error_response(status: u16, error: &str) -> RuntimeResponse {
         status,
         body: serde_json::json!({ "error": error }),
     }
+}
+
+fn api_invalid_input(message: &str) -> InterpretError {
+    InterpretError::raised_api_error(
+        "InvalidInput",
+        vec![serde_json::Value::String(message.to_string())],
+    )
 }
 
 fn json_response(status: u16, body: &serde_json::Value) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -524,6 +604,7 @@ mod tests {
                 route("POST", "/users", "create_user"),
                 route("GET", "/users/:id", "get_user"),
             ],
+            error_mapper: Some("map_error".to_string()),
         };
         let functions = users_api_functions();
 

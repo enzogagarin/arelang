@@ -31,12 +31,14 @@ fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
     return Http.Response.ok({ "status": "ok" })
 }
 
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
-    let input = req.json<CreateUserInput>()?
-
+fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {
     validate.email(input.email)?
     validate.length(input.name, min: 2, max: 80)?
+    return input
+}
 
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+    let input = validate_user(req.json<CreateUserInput>()?)?
     let user = ctx.state.users.insert(input)?
     return Http.Response.created(user)
 }

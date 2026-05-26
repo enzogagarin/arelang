@@ -1,12 +1,14 @@
-use are_ast::{CallArg, Expr, FunctionBody, FunctionDecl, Path, Stmt, TypeExpr};
+use are_ast::{CallArg, Expr, FunctionBody, FunctionDecl, Path, Pattern, Stmt, TypeExpr};
 use are_semantics::{Builtin, builtin_by_callee};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Json(JsonValue),
     HttpResponse(HttpResponseValue),
+    Enum(EnumValue),
     Unit,
 }
 
@@ -14,6 +16,13 @@ pub enum Value {
 pub struct HttpResponseValue {
     pub status: u16,
     pub body: JsonValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumValue {
+    pub enum_name: String,
+    pub variant: String,
+    pub payload: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +49,13 @@ pub enum InterpretError {
     ExpectedInteger {
         context: String,
     },
+    ExpectedEnum {
+        context: String,
+    },
+    UnmatchedPattern {
+        variant: String,
+    },
+    RaisedError(EnumValue),
     RaisedHttpResponse(HttpResponseValue),
 }
 
@@ -75,6 +91,13 @@ impl std::fmt::Display for InterpretError {
             Self::ExpectedInteger { context } => {
                 write!(f, "`{context}` expected an integer value")
             }
+            Self::ExpectedEnum { context } => write!(f, "`{context}` expected an enum value"),
+            Self::UnmatchedPattern { variant } => {
+                write!(f, "no match arm handled variant `{variant}`")
+            }
+            Self::RaisedError(error) => {
+                write!(f, "raised {}.{}", error.enum_name, error.variant)
+            }
             Self::RaisedHttpResponse(response) => {
                 write!(f, "raised HTTP response with status {}", response.status)
             }
@@ -94,9 +117,26 @@ impl InterpretError {
     }
 
     #[must_use]
+    pub fn raised_api_error(variant: &str, payload: Vec<JsonValue>) -> Self {
+        Self::RaisedError(EnumValue {
+            enum_name: "ApiError".to_string(),
+            variant: variant.to_string(),
+            payload: payload.into_iter().map(Value::Json).collect(),
+        })
+    }
+
+    #[must_use]
     pub const fn as_http_response(&self) -> Option<&HttpResponseValue> {
         match self {
             Self::RaisedHttpResponse(response) => Some(response),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_raised_error(&self) -> Option<&EnumValue> {
+        match self {
+            Self::RaisedError(error) => Some(error),
             _ => None,
         }
     }
@@ -178,34 +218,96 @@ pub fn interpret_function_with_host(
     function: &FunctionDecl,
     host: &mut impl Host,
 ) -> Result<Value, InterpretError> {
-    Interpreter::new(host).interpret_function(function)
+    let functions: HashMap<String, FunctionDecl> = HashMap::new();
+    Interpreter::new(host, &functions).interpret_function(function)
 }
 
-struct Interpreter<'a, H> {
+/// Interpret an Arelang function body with access to local functions.
+///
+/// # Errors
+///
+/// Returns an error when the function uses unsupported syntax, raises an
+/// application error, or calls a host operation that fails.
+pub fn interpret_function_with_host_and_functions<S: BuildHasher>(
+    function: &FunctionDecl,
+    functions: &HashMap<String, FunctionDecl, S>,
+    host: &mut impl Host,
+) -> Result<Value, InterpretError> {
+    Interpreter::new(host, functions).interpret_function(function)
+}
+
+/// Interpret an Arelang function body with explicit positional arguments.
+///
+/// # Errors
+///
+/// Returns an error when argument binding fails, the function uses unsupported
+/// syntax, raises an application error, or calls a host operation that fails.
+pub fn interpret_function_with_host_and_args<S: BuildHasher>(
+    function: &FunctionDecl,
+    functions: &HashMap<String, FunctionDecl, S>,
+    host: &mut impl Host,
+    args: Vec<Value>,
+) -> Result<Value, InterpretError> {
+    Interpreter::new(host, functions).interpret_function_with_args(function, args)
+}
+
+struct Interpreter<'a, H, S> {
     host: &'a mut H,
+    functions: &'a HashMap<String, FunctionDecl, S>,
     env: HashMap<String, Value>,
 }
 
-impl<'a, H: Host> Interpreter<'a, H> {
-    fn new(host: &'a mut H) -> Self {
+impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
+    fn new(host: &'a mut H, functions: &'a HashMap<String, FunctionDecl, S>) -> Self {
         Self {
             host,
+            functions,
             env: HashMap::new(),
         }
     }
 
     fn interpret_function(&mut self, function: &FunctionDecl) -> Result<Value, InterpretError> {
+        self.interpret_function_with_args(function, Vec::new())
+    }
+
+    fn interpret_function_with_args(
+        &mut self,
+        function: &FunctionDecl,
+        args: Vec<Value>,
+    ) -> Result<Value, InterpretError> {
+        if args.len() != function.params.len() && !args.is_empty() {
+            return Err(InterpretError::Arity {
+                callee: function.name.clone(),
+                expected: function.params.len(),
+                actual: args.len(),
+            });
+        }
+
         let FunctionBody::Parsed { block } = &function.body else {
             return Err(InterpretError::UnsupportedBody(function.name.clone()));
         };
 
-        for statement in &block.statements {
-            if let Some(value) = self.exec_stmt(statement)? {
-                return Ok(value);
-            }
+        let previous_env = std::mem::take(&mut self.env);
+        for (param, value) in function.params.iter().zip(args) {
+            self.env.insert(param.name.clone(), value);
         }
 
-        Err(InterpretError::MissingReturn(function.name.clone()))
+        let mut result = Err(InterpretError::MissingReturn(function.name.clone()));
+        for statement in &block.statements {
+            match self.exec_stmt(statement) {
+                Ok(Some(value)) => {
+                    result = Ok(value);
+                    break;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    result = Err(err);
+                    break;
+                }
+            }
+        }
+        self.env = previous_env;
+        result
     }
 
     fn exec_stmt(&mut self, statement: &Stmt) -> Result<Option<Value>, InterpretError> {
@@ -220,7 +322,35 @@ impl<'a, H: Host> Interpreter<'a, H> {
                 Ok(None)
             }
             Stmt::Return { value, .. } => self.eval_expr(value).map(Some),
+            Stmt::Match { value, arms, .. } => self.exec_match(value, arms),
         }
+    }
+
+    fn exec_match(
+        &mut self,
+        value: &Expr,
+        arms: &[are_ast::MatchArm],
+    ) -> Result<Option<Value>, InterpretError> {
+        let value = self.eval_expr(value)?;
+        let Value::Enum(error) = value else {
+            return Err(InterpretError::ExpectedEnum {
+                context: "match".to_string(),
+            });
+        };
+
+        let Some(arm) = arms.iter().find(|arm| match &arm.pattern {
+            Pattern::Variant { name, .. } => *name == error.variant,
+        }) else {
+            return Err(InterpretError::UnmatchedPattern {
+                variant: error.variant,
+            });
+        };
+
+        let Pattern::Variant { bindings, .. } = &arm.pattern;
+        let previous = self.bind_match_payload(bindings, &error.payload);
+        let result = self.exec_stmt(&arm.body);
+        self.restore_bindings(previous);
+        result
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpretError> {
@@ -292,6 +422,15 @@ impl<'a, H: Host> Interpreter<'a, H> {
                 let body = self.single_json_arg(callee, args)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status: 201, body }))
             }
+            Some(Builtin::HttpResponseError) => {
+                let status = self.positional_i64_arg(callee, args, 0, 2)?;
+                let status =
+                    u16::try_from(status).map_err(|_| InterpretError::ExpectedInteger {
+                        context: callee.to_string(),
+                    })?;
+                let body = self.positional_json_arg(callee, args, 1, 2)?;
+                Ok(Value::HttpResponse(HttpResponseValue { status, body }))
+            }
             Some(Builtin::RequestJson) => {
                 Self::expect_arity(callee, args, 0)?;
                 let type_name = type_args.first().and_then(type_expr_name);
@@ -326,8 +465,44 @@ impl<'a, H: Host> Interpreter<'a, H> {
                 let id = self.single_json_arg(callee, args)?;
                 self.host.get_user(id).map(Value::Json)
             }
-            None => Err(InterpretError::UnsupportedExpression(callee.to_string())),
+            None => self.eval_user_function_call(callee, args),
         }
+    }
+
+    fn eval_user_function_call(
+        &mut self,
+        callee: &str,
+        args: &[CallArg],
+    ) -> Result<Value, InterpretError> {
+        let Some(function) = self.functions.get(callee).cloned() else {
+            return Err(InterpretError::UnsupportedExpression(callee.to_string()));
+        };
+
+        let positional = args
+            .iter()
+            .filter(|arg| arg.label.is_none())
+            .collect::<Vec<_>>();
+        if positional.len() != function.params.len() {
+            return Err(InterpretError::Arity {
+                callee: callee.to_string(),
+                expected: function.params.len(),
+                actual: positional.len(),
+            });
+        }
+
+        if let Some(arg) = args.iter().find(|arg| arg.label.is_some()) {
+            return Err(InterpretError::UnsupportedExpression(format!(
+                "{}:{}",
+                callee,
+                arg.label.as_deref().unwrap_or_default()
+            )));
+        }
+
+        let values = positional
+            .iter()
+            .map(|arg| self.eval_expr(&arg.value))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.interpret_function_with_args(&function, values)
     }
 
     fn expect_arity(callee: &str, args: &[CallArg], expected: usize) -> Result<(), InterpretError> {
@@ -413,6 +588,48 @@ impl<'a, H: Host> Interpreter<'a, H> {
                 context: label.to_string(),
             })
     }
+
+    fn positional_i64_arg(
+        &mut self,
+        callee: &str,
+        args: &[CallArg],
+        index: usize,
+        expected: usize,
+    ) -> Result<i64, InterpretError> {
+        let value = self.positional_json_arg(callee, args, index, expected)?;
+        value
+            .as_i64()
+            .ok_or_else(|| InterpretError::ExpectedInteger {
+                context: callee.to_string(),
+            })
+    }
+
+    fn bind_match_payload(
+        &mut self,
+        bindings: &[String],
+        payload: &[Value],
+    ) -> Vec<(String, Option<Value>)> {
+        let mut previous = Vec::new();
+
+        for (binding, value) in bindings.iter().zip(payload) {
+            previous.push((
+                binding.clone(),
+                self.env.insert(binding.clone(), value.clone()),
+            ));
+        }
+
+        previous
+    }
+
+    fn restore_bindings(&mut self, previous: Vec<(String, Option<Value>)>) {
+        for (name, value) in previous {
+            if let Some(value) = value {
+                self.env.insert(name, value);
+            } else {
+                self.env.remove(&name);
+            }
+        }
+    }
 }
 
 struct NoopHost;
@@ -471,17 +688,19 @@ fn type_expr_name(ty: &TypeExpr) -> Option<String> {
 fn expect_json(value: Value, context: &str) -> Result<JsonValue, InterpretError> {
     match value {
         Value::Json(value) => Ok(value),
-        Value::HttpResponse(_) | Value::Unit => Err(InterpretError::ExpectedJson {
-            context: context.to_string(),
-        }),
+        Value::HttpResponse(_) | Value::Enum(_) | Value::Unit => {
+            Err(InterpretError::ExpectedJson {
+                context: context.to_string(),
+            })
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Host, HttpResponseValue, InterpretError, Value, interpret_function,
-        interpret_function_with_host,
+        EnumValue, Host, HttpResponseValue, InterpretError, Value, interpret_function,
+        interpret_function_with_host_and_args, interpret_function_with_host_and_functions,
     };
     use are_ast::{FunctionDecl, Item};
     use are_lexer::lex_source;
@@ -504,11 +723,10 @@ mod tests {
 
     #[test]
     fn interprets_create_user_flow_with_host_effects() {
-        let create_user = users_api_function("create_user");
         let mut host = TestHost::new(r#"{"email":"ada@example.com","name":"Ada"}"#);
 
         let value =
-            interpret_function_with_host(&create_user, &mut host).expect("create_user runs");
+            interpret_users_api_function("create_user", &mut host).expect("create_user runs");
 
         assert_eq!(
             value,
@@ -525,11 +743,11 @@ mod tests {
 
     #[test]
     fn propagates_create_user_validation_errors() {
-        let create_user = users_api_function("create_user");
         let mut host = TestHost::new(r#"{"email":"invalid","name":"Ada"}"#);
 
-        let err = interpret_function_with_host(&create_user, &mut host).expect_err("email fails");
-        let response = err.as_http_response().expect("validation maps to HTTP");
+        let err = interpret_users_api_function("create_user", &mut host).expect_err("email fails");
+        let error = err.as_raised_error().expect("validation raises ApiError");
+        let response = map_users_api_error(error.clone(), &mut host);
 
         assert_eq!(response.status, 400);
         assert_eq!(
@@ -540,13 +758,11 @@ mod tests {
 
     #[test]
     fn interprets_get_user_flow_with_host_effects() {
-        let create_user = users_api_function("create_user");
-        let get_user = users_api_function("get_user");
         let mut host = TestHost::new(r#"{"email":"ada@example.com","name":"Ada"}"#);
 
-        interpret_function_with_host(&create_user, &mut host).expect("create_user runs");
+        interpret_users_api_function("create_user", &mut host).expect("create_user runs");
         host.set_path_param("id", "1");
-        let value = interpret_function_with_host(&get_user, &mut host).expect("get_user runs");
+        let value = interpret_users_api_function("get_user", &mut host).expect("get_user runs");
 
         assert_eq!(
             value,
@@ -563,18 +779,39 @@ mod tests {
 
     #[test]
     fn propagates_get_user_not_found_errors() {
-        let get_user = users_api_function("get_user");
         let mut host = TestHost::new("");
         host.set_path_param("id", "42");
 
-        let err = interpret_function_with_host(&get_user, &mut host).expect_err("user missing");
-        let response = err.as_http_response().expect("not found maps to HTTP");
+        let err = interpret_users_api_function("get_user", &mut host).expect_err("user missing");
+        let error = err.as_raised_error().expect("not found raises ApiError");
+        let response = map_users_api_error(error.clone(), &mut host);
 
         assert_eq!(response.status, 404);
         assert_eq!(response.body, serde_json::json!({ "error": "not_found" }));
     }
 
+    #[test]
+    fn interprets_error_mapper_match_body() {
+        let mut host = TestHost::new("");
+        let response = map_users_api_error(
+            EnumValue {
+                enum_name: "ApiError".to_string(),
+                variant: "Internal".to_string(),
+                payload: vec![Value::Json(serde_json::Value::String("boom".to_string()))],
+            },
+            &mut host,
+        );
+
+        assert_eq!(response.status, 500);
+        assert_eq!(response.body, serde_json::json!({ "error": "boom" }));
+    }
+
     fn users_api_function(name: &str) -> FunctionDecl {
+        let mut functions = users_api_functions();
+        functions.remove(name).expect("function exists")
+    }
+
+    fn users_api_functions() -> HashMap<String, FunctionDecl> {
         let source = include_str!("../../../examples/users_api/main.are");
         let file = Path::new("examples/users_api/main.are");
         let (tokens, lex_diagnostics) = lex_source(file, source);
@@ -585,15 +822,41 @@ mod tests {
 
         module
             .items
-            .iter()
-            .find_map(|item| {
+            .into_iter()
+            .filter_map(|item| {
                 if let Item::Function(function) = item {
-                    (function.name == name).then_some(function.clone())
+                    Some((function.name.clone(), function))
                 } else {
                     None
                 }
             })
-            .expect("function exists")
+            .collect()
+    }
+
+    fn interpret_users_api_function(
+        name: &str,
+        host: &mut TestHost,
+    ) -> Result<Value, InterpretError> {
+        let functions = users_api_functions();
+        let function = functions.get(name).expect("function exists");
+        interpret_function_with_host_and_functions(function, &functions, host)
+    }
+
+    fn map_users_api_error(error: EnumValue, host: &mut TestHost) -> HttpResponseValue {
+        let functions = users_api_functions();
+        let mapper = functions.get("map_error").expect("mapper exists");
+        let value = interpret_function_with_host_and_args(
+            mapper,
+            &functions,
+            host,
+            vec![Value::Enum(error)],
+        )
+        .expect("mapper runs");
+
+        let Value::HttpResponse(response) = value else {
+            panic!("mapper should return response");
+        };
+        response
     }
 
     struct TestHost {
@@ -624,12 +887,12 @@ mod tests {
             type_name: Option<&str>,
         ) -> Result<serde_json::Value, InterpretError> {
             let value = serde_json::from_str::<serde_json::Value>(&self.request_body)
-                .map_err(|_| InterpretError::raised_json_error(400, "invalid_json"))?;
+                .map_err(|_| api_invalid_input("invalid_json"))?;
             if type_name == Some("CreateUserInput")
                 && !(value.get("email").is_some_and(serde_json::Value::is_string)
                     && value.get("name").is_some_and(serde_json::Value::is_string))
             {
-                return Err(InterpretError::raised_json_error(400, "invalid_json"));
+                return Err(api_invalid_input("invalid_json"));
             }
 
             Ok(value)
@@ -640,7 +903,7 @@ mod tests {
                 return Ok(());
             }
 
-            Err(InterpretError::raised_json_error(400, "invalid_email"))
+            Err(api_invalid_input("invalid_email"))
         }
 
         fn validate_length(
@@ -650,7 +913,7 @@ mod tests {
             max: i64,
         ) -> Result<(), InterpretError> {
             let Some(text) = value.as_str() else {
-                return Err(InterpretError::raised_json_error(400, "invalid_name"));
+                return Err(api_invalid_input("invalid_name"));
             };
             let len = i64::try_from(text.chars().count()).map_err(|_| {
                 InterpretError::UnsupportedExpression("test string too long".into())
@@ -659,7 +922,7 @@ mod tests {
                 return Ok(());
             }
 
-            Err(InterpretError::raised_json_error(400, "invalid_name"))
+            Err(api_invalid_input("invalid_name"))
         }
 
         fn insert_user(
@@ -682,13 +945,13 @@ mod tests {
             name: &str,
         ) -> Result<serde_json::Value, InterpretError> {
             let Some(value) = self.path_params.get(name) else {
-                return Err(InterpretError::raised_json_error(400, "missing_id"));
+                return Err(api_invalid_input("missing_id"));
             };
 
             if type_name == Some("UserId") {
                 let id = value
                     .parse::<u64>()
-                    .map_err(|_| InterpretError::raised_json_error(400, "invalid_id"))?;
+                    .map_err(|_| api_invalid_input("invalid_id"))?;
                 return Ok(serde_json::json!(id));
             }
 
@@ -697,13 +960,20 @@ mod tests {
 
         fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
             let Some(id) = id.as_u64() else {
-                return Err(InterpretError::raised_json_error(400, "invalid_id"));
+                return Err(api_invalid_input("invalid_id"));
             };
 
             self.users
                 .get(&id)
                 .cloned()
-                .ok_or_else(|| InterpretError::raised_json_error(404, "not_found"))
+                .ok_or_else(|| InterpretError::raised_api_error("NotFound", Vec::new()))
         }
+    }
+
+    fn api_invalid_input(message: &str) -> InterpretError {
+        InterpretError::raised_api_error(
+            "InvalidInput",
+            vec![serde_json::Value::String(message.to_string())],
+        )
     }
 }

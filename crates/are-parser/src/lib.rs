@@ -1,7 +1,7 @@
 use are_ast::{
     Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item, Module,
-    ObjectField, Param, Path, RawBlock, RouteDecl, ServiceDecl, ServiceUse, Stmt, StructDecl,
-    TypeDecl, TypeExpr, UseDecl,
+    ObjectField, Param, Path, Pattern, RawBlock, RouteDecl, ServiceDecl, ServiceUse, Stmt,
+    StructDecl, TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, Position, SourceRange};
 use are_lexer::{Keyword, Token, TokenKind};
@@ -420,6 +420,7 @@ impl<'a> Parser<'a> {
     fn can_start_statement(&self) -> bool {
         self.check_keyword(Keyword::Let)
             || self.check_keyword(Keyword::Return)
+            || self.check_keyword(Keyword::Match)
             || self.check_kind(&TokenKind::Identifier)
     }
 
@@ -450,6 +451,10 @@ impl<'a> Parser<'a> {
 
         if self.check_keyword(Keyword::Return) {
             return self.parse_return_statement();
+        }
+
+        if self.check_keyword(Keyword::Match) {
+            return self.parse_match_statement();
         }
 
         let value = self.parse_expr()?;
@@ -484,6 +489,69 @@ impl<'a> Parser<'a> {
         Some(Stmt::Return {
             value,
             range: SourceRange::new(return_start, stmt_end),
+        })
+    }
+
+    fn parse_match_statement(&mut self) -> Option<Stmt> {
+        let start = self
+            .match_keyword(Keyword::Match)
+            .expect("match statement starts with match")
+            .start;
+        let value = self.parse_expr()?;
+        self.expect_kind(&TokenKind::LeftBrace, "expected `{` after match value")?;
+
+        let mut arms = Vec::new();
+        while !self.at_eof() && !self.check_kind(&TokenKind::RightBrace) {
+            arms.push(self.parse_match_arm()?);
+        }
+
+        let end = self
+            .expect_kind(&TokenKind::RightBrace, "expected `}` after match arms")?
+            .range
+            .end;
+
+        Some(Stmt::Match {
+            value,
+            arms,
+            range: SourceRange::new(start, end),
+        })
+    }
+
+    fn parse_match_arm(&mut self) -> Option<are_ast::MatchArm> {
+        let pattern = self.parse_pattern()?;
+        self.expect_kind(&TokenKind::FatArrow, "expected `=>` after match pattern")?;
+        let body = self.parse_statement()?;
+        let range = SourceRange::new(pattern.range().start, body.range().end);
+
+        Some(are_ast::MatchArm {
+            pattern,
+            body: Box::new(body),
+            range,
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Option<Pattern> {
+        let start = self.peek().range.start;
+        let name = self.expect_identifier("expected match variant name")?;
+        let mut bindings = Vec::new();
+
+        if self.match_kind(&TokenKind::LeftParen).is_some() {
+            if !self.check_kind(&TokenKind::RightParen) {
+                loop {
+                    bindings.push(self.expect_identifier("expected payload binding name")?);
+                    if self.match_kind(&TokenKind::Comma).is_none() {
+                        break;
+                    }
+                }
+            }
+            self.expect_kind(&TokenKind::RightParen, "expected `)` after pattern payload")?;
+        }
+
+        let end = self.previous_range()?.end;
+        Some(Pattern::Variant {
+            name,
+            bindings,
+            range: SourceRange::new(start, end),
         })
     }
 
@@ -870,7 +938,7 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
         let module = module.expect("module parses");
-        assert_eq!(module.items.len(), 14);
+        assert_eq!(module.items.len(), 15);
         assert!(matches!(module.items.last(), Some(Item::Service(_))));
 
         let health = module
@@ -906,7 +974,7 @@ mod tests {
         let FunctionBody::Parsed { block } = &create_user.body else {
             panic!("create_user body should parse into statements");
         };
-        assert_eq!(block.statements.len(), 5);
+        assert_eq!(block.statements.len(), 3);
         assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
         assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 
@@ -927,6 +995,25 @@ mod tests {
         assert_eq!(block.statements.len(), 3);
         assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
         assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
+
+        let map_error = module
+            .items
+            .iter()
+            .find_map(|item| {
+                if let Item::Function(function) = item {
+                    (function.name == "map_error").then_some(function)
+                } else {
+                    None
+                }
+            })
+            .expect("map_error function");
+        let FunctionBody::Parsed { block } = &map_error.body else {
+            panic!("map_error body should parse into a match statement");
+        };
+        assert!(matches!(
+            block.statements.first(),
+            Some(Stmt::Match { arms, .. }) if arms.len() == 3
+        ));
     }
 
     #[test]

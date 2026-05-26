@@ -2,6 +2,7 @@
 pub enum Builtin {
     HttpResponseOk,
     HttpResponseCreated,
+    HttpResponseError,
     RequestJson,
     ValidateEmail,
     ValidateLength,
@@ -16,6 +17,7 @@ impl Builtin {
         match self {
             Self::HttpResponseOk => "Http.Response.ok",
             Self::HttpResponseCreated => "Http.Response.created",
+            Self::HttpResponseError => "Http.Response.error",
             Self::RequestJson => "req.json",
             Self::ValidateEmail => "validate.email",
             Self::ValidateLength => "validate.length",
@@ -31,6 +33,7 @@ pub fn builtin_by_callee(callee: &str) -> Option<Builtin> {
     match callee {
         "Http.Response.ok" => Some(Builtin::HttpResponseOk),
         "Http.Response.created" => Some(Builtin::HttpResponseCreated),
+        "Http.Response.error" => Some(Builtin::HttpResponseError),
         "req.json" => Some(Builtin::RequestJson),
         "validate.email" => Some(Builtin::ValidateEmail),
         "validate.length" => Some(Builtin::ValidateLength),
@@ -50,6 +53,7 @@ mod tests {
         for builtin in [
             Builtin::HttpResponseOk,
             Builtin::HttpResponseCreated,
+            Builtin::HttpResponseError,
             Builtin::RequestJson,
             Builtin::ValidateEmail,
             Builtin::ValidateLength,

@@ -1,5 +1,5 @@
 use are_ast::{
-    CallArg, EnumDecl, Expr, Field, FunctionBody, FunctionDecl, Item, Module, Param, Path,
+    CallArg, EnumDecl, Expr, Field, FunctionBody, FunctionDecl, Item, Module, Param, Path, Pattern,
     RouteDecl, ServiceDecl, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, SourceRange};
@@ -18,6 +18,7 @@ struct TypeChecker<'a> {
     http_aliases: HashSet<String>,
     functions: HashMap<String, &'a FunctionDecl>,
     structs: HashMap<String, &'a StructDecl>,
+    enums: HashMap<String, &'a EnumDecl>,
     types: HashMap<String, &'a TypeDecl>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -27,6 +28,7 @@ impl<'a> TypeChecker<'a> {
         let http_aliases = collect_http_aliases(module);
         let functions = collect_functions(module);
         let structs = collect_structs(module);
+        let enums = collect_enums(module);
         let types = collect_types(module);
 
         Self {
@@ -35,6 +37,7 @@ impl<'a> TypeChecker<'a> {
             http_aliases,
             functions,
             structs,
+            enums,
             types,
             diagnostics: Vec::new(),
         }
@@ -98,7 +101,9 @@ impl<'a> TypeChecker<'a> {
         let mut body = BodyChecker {
             file: &self.file,
             http_aliases: &self.http_aliases,
+            functions: &self.functions,
             structs: &self.structs,
+            enums: &self.enums,
             types: &self.types,
             env: decl
                 .params
@@ -654,12 +659,20 @@ impl BodyType {
 struct BodyChecker<'a> {
     file: &'a FsPath,
     http_aliases: &'a HashSet<String>,
+    functions: &'a HashMap<String, &'a FunctionDecl>,
     structs: &'a HashMap<String, &'a StructDecl>,
+    enums: &'a HashMap<String, &'a EnumDecl>,
     types: &'a HashMap<String, &'a TypeDecl>,
     env: HashMap<String, BodyType>,
     return_type: Option<BodyType>,
     result_error: Option<BodyType>,
     diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone)]
+struct EnumVariantShape {
+    name: String,
+    payload: Vec<(String, BodyType)>,
 }
 
 impl BodyChecker<'_> {
@@ -682,7 +695,108 @@ impl BodyChecker<'_> {
                 let value_type = self.check_expr(value);
                 self.check_return_type(&value_type, *range, function_name);
             }
+            Stmt::Match { value, arms, range } => {
+                self.check_match_statement(value, arms, *range, function_name);
+            }
         }
+    }
+
+    fn check_match_statement(
+        &mut self,
+        value: &Expr,
+        arms: &[are_ast::MatchArm],
+        range: SourceRange,
+        function_name: &str,
+    ) {
+        let matched_type = self.check_expr(value);
+        let BodyType::Named(enum_name) = matched_type else {
+            self.error(
+                "E_BODY_0010",
+                range,
+                format!("`match` cannot inspect `{}`", matched_type.display()),
+                "`match` currently works on local enum values",
+            );
+            for arm in arms {
+                self.check_statement(&arm.body, function_name);
+            }
+            return;
+        };
+
+        let Some(variants) = self.enum_variants(&enum_name) else {
+            self.error(
+                "E_BODY_0010",
+                range,
+                format!("`{enum_name}` is not a local enum"),
+                "`match` currently works on local enum values",
+            );
+            for arm in arms {
+                self.check_statement(&arm.body, function_name);
+            }
+            return;
+        };
+
+        let mut seen = HashSet::new();
+        for arm in arms {
+            self.check_match_arm(arm, &variants, &mut seen, function_name);
+        }
+
+        let missing = variants
+            .iter()
+            .filter(|variant| !seen.contains(&variant.name))
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.error(
+                "E_BODY_0011",
+                range,
+                format!("`match` does not cover variant(s): {}", missing.join(", ")),
+                "error mappers should handle every variant explicitly",
+            );
+        }
+    }
+
+    fn check_match_arm(
+        &mut self,
+        arm: &are_ast::MatchArm,
+        variants: &[EnumVariantShape],
+        seen: &mut HashSet<String>,
+        function_name: &str,
+    ) {
+        let Pattern::Variant {
+            name,
+            bindings,
+            range,
+        } = &arm.pattern;
+
+        let Some(variant) = variants.iter().find(|variant| variant.name == *name) else {
+            self.error(
+                "E_BODY_0012",
+                *range,
+                format!("unknown enum variant `{name}`"),
+                "match arms must use variants from the matched enum",
+            );
+            self.check_statement(&arm.body, function_name);
+            return;
+        };
+
+        seen.insert(name.clone());
+
+        if bindings.len() != variant.payload.len() {
+            self.error(
+                "E_BODY_0013",
+                *range,
+                format!(
+                    "`{name}` pattern expects {} binding(s), got {}",
+                    variant.payload.len(),
+                    bindings.len()
+                ),
+                "pattern bindings must match the enum variant payload",
+            );
+        }
+
+        let previous = self.bind_pattern_payload(bindings, &variant.payload, *range);
+        self.check_statement(&arm.body, function_name);
+        self.restore_bindings(previous);
     }
 
     fn check_expr(&mut self, expr: &Expr) -> BodyType {
@@ -774,29 +888,70 @@ impl BodyChecker<'_> {
         range: SourceRange,
     ) -> BodyType {
         let callee_name = path_name(callee);
-        let Some(builtin) = builtin_by_callee(&callee_name) else {
+        if let Some(builtin) = builtin_by_callee(&callee_name) {
+            return self.check_builtin_call(builtin, &callee_name, type_args, args, range);
+        }
+
+        if callee.segments.len() == 1
+            && let Some(function) = self.functions.get(&callee.segments[0]).copied()
+        {
+            return self.check_user_function_call(function, type_args, args, range);
+        }
+
+        self.error(
+            "E_BODY_0003",
+            range,
+            format!("unsupported call `{callee_name}`"),
+            "calls must target a known local function or supported std backend function",
+        );
+        BodyType::Unknown
+    }
+
+    fn check_builtin_call(
+        &mut self,
+        builtin: Builtin,
+        callee_name: &str,
+        type_args: &[TypeExpr],
+        args: &[CallArg],
+        range: SourceRange,
+    ) -> BodyType {
+        if !type_args.is_empty() && !matches!(builtin, Builtin::RequestJson | Builtin::ContextParam)
+        {
             self.error(
-                "E_BODY_0003",
+                "E_BODY_0014",
                 range,
-                format!("unsupported call `{callee_name}`"),
-                "the MVP body checker currently supports the std HTTP, request, context, state, and validation calls",
+                format!(
+                    "`{callee_name}` does not accept type argument(s), got {}",
+                    type_args.len()
+                ),
+                "only generic std calls such as `req.json<T>()` accept type arguments",
             );
-            return BodyType::Unknown;
-        };
+        }
 
         match builtin {
             Builtin::HttpResponseOk | Builtin::HttpResponseCreated => {
-                self.expect_positional_arity(&callee_name, args, 1, range);
+                self.expect_positional_arity(callee_name, args, 1, range);
                 self.check_positional_arg(args, 0);
                 BodyType::HttpResponse
             }
+            Builtin::HttpResponseError => {
+                let status_type = self.expect_positional_arg(callee_name, args, 0, 2, range);
+                self.expect_exact_type(
+                    &status_type,
+                    &BodyType::Integer,
+                    range,
+                    "Http.Response.error expects an integer HTTP status",
+                );
+                self.check_positional_arg(args, 1);
+                BodyType::HttpResponse
+            }
             Builtin::RequestJson => {
-                self.expect_positional_arity(&callee_name, args, 0, range);
-                let ok = self.single_type_arg(&callee_name, type_args, range);
+                self.expect_positional_arity(callee_name, args, 0, range);
+                let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)
             }
             Builtin::ValidateEmail => {
-                let value_type = self.expect_single_arg(&callee_name, args, range);
+                let value_type = self.expect_single_arg(callee_name, args, range);
                 self.expect_string_like(
                     &value_type,
                     range,
@@ -805,31 +960,160 @@ impl BodyChecker<'_> {
                 self.result_type(BodyType::Unit)
             }
             Builtin::ValidateLength => {
-                let value_type = self.expect_positional_arg(&callee_name, args, 0, 1, range);
+                let value_type = self.expect_positional_arg(callee_name, args, 0, 1, range);
                 self.expect_string_like(
                     &value_type,
                     range,
                     "validate.length expects a string value",
                 );
-                self.expect_named_integer(&callee_name, args, "min", range);
-                self.expect_named_integer(&callee_name, args, "max", range);
+                self.expect_named_integer(callee_name, args, "min", range);
+                self.expect_named_integer(callee_name, args, "max", range);
                 self.result_type(BodyType::Unit)
             }
             Builtin::ContextParam => {
-                let name_type = self.expect_single_arg(&callee_name, args, range);
+                let name_type = self.expect_single_arg(callee_name, args, range);
                 self.expect_exact_type(
                     &name_type,
                     &BodyType::String,
                     range,
                     "ctx.param expects the route parameter name as a string",
                 );
-                let ok = self.single_type_arg(&callee_name, type_args, range);
+                let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)
             }
             Builtin::StateUsersInsert | Builtin::StateUsersGet => {
-                self.expect_positional_arity(&callee_name, args, 1, range);
+                self.expect_positional_arity(callee_name, args, 1, range);
                 self.check_positional_arg(args, 0);
                 self.result_type(self.named_or_unknown("User"))
+            }
+        }
+    }
+
+    fn check_user_function_call(
+        &mut self,
+        function: &FunctionDecl,
+        type_args: &[TypeExpr],
+        args: &[CallArg],
+        range: SourceRange,
+    ) -> BodyType {
+        if !type_args.is_empty() {
+            self.error(
+                "E_BODY_0014",
+                range,
+                format!(
+                    "`{}` does not accept type argument(s), got {}",
+                    function.name,
+                    type_args.len()
+                ),
+                "local functions are monomorphic in the current language slice",
+            );
+        }
+
+        for arg in args.iter().filter(|arg| arg.label.is_some()) {
+            self.error(
+                "E_BODY_0015",
+                arg.range,
+                format!("`{}` does not accept named arguments", function.name),
+                "local function calls currently use positional arguments",
+            );
+        }
+
+        let positional = args
+            .iter()
+            .filter(|arg| arg.label.is_none())
+            .collect::<Vec<_>>();
+        if positional.len() != function.params.len() {
+            self.error(
+                "E_BODY_0004",
+                range,
+                format!(
+                    "`{}` expects {} argument(s), got {}",
+                    function.name,
+                    function.params.len(),
+                    positional.len()
+                ),
+                "local function calls must match the function signature",
+            );
+        }
+
+        for (arg, param) in positional.iter().zip(&function.params) {
+            let actual = self.check_expr(&arg.value);
+            let expected = body_type_from_type_expr(&param.ty, self.http_aliases);
+            self.expect_exact_type(
+                &actual,
+                &expected,
+                arg.range,
+                format!(
+                    "`{}` parameter `{}` expects `{}`",
+                    function.name,
+                    param.name,
+                    expected.display()
+                ),
+            );
+        }
+
+        function.return_type.as_ref().map_or(BodyType::Unit, |ty| {
+            body_type_from_type_expr(ty, self.http_aliases)
+        })
+    }
+
+    fn enum_variants(&self, enum_name: &str) -> Option<Vec<EnumVariantShape>> {
+        let decl = self.enums.get(enum_name)?;
+        Some(
+            decl.variants
+                .iter()
+                .map(|variant| EnumVariantShape {
+                    name: variant.name.clone(),
+                    payload: variant
+                        .payload
+                        .iter()
+                        .map(|field| {
+                            (
+                                field.name.clone(),
+                                body_type_from_type_expr(&field.ty, self.http_aliases),
+                            )
+                        })
+                        .collect(),
+                })
+                .collect(),
+        )
+    }
+
+    fn bind_pattern_payload(
+        &mut self,
+        bindings: &[String],
+        payload: &[(String, BodyType)],
+        range: SourceRange,
+    ) -> Vec<(String, Option<BodyType>)> {
+        let mut seen = HashSet::new();
+        let mut previous = Vec::new();
+
+        for (binding, (_field_name, ty)) in bindings.iter().zip(payload) {
+            if !seen.insert(binding.as_str()) {
+                self.error(
+                    "E_BODY_0016",
+                    range,
+                    format!("duplicate pattern binding `{binding}`"),
+                    "each payload binding in a match arm must have a unique name",
+                );
+                continue;
+            }
+
+            previous.push((
+                binding.clone(),
+                self.env.insert(binding.clone(), ty.clone()),
+            ));
+        }
+
+        previous
+    }
+
+    fn restore_bindings(&mut self, previous: Vec<(String, Option<BodyType>)>) {
+        for (name, value) in previous {
+            if let Some(value) = value {
+                self.env.insert(name, value);
+            } else {
+                self.env.remove(&name);
             }
         }
     }
@@ -1139,6 +1423,19 @@ fn collect_structs(module: &Module) -> HashMap<String, &StructDecl> {
         .iter()
         .filter_map(|item| {
             let Item::Struct(decl) = item else {
+                return None;
+            };
+            Some((decl.name.clone(), decl))
+        })
+        .collect()
+}
+
+fn collect_enums(module: &Module) -> HashMap<String, &EnumDecl> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Enum(decl) = item else {
                 return None;
             };
             Some((decl.name.clone(), decl))
@@ -1538,6 +1835,48 @@ mod tests {
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
         assert_eq!(diagnostics[0].code, "E_BODY_0006");
+    }
+
+    #[test]
+    fn rejects_invalid_local_function_argument_types() {
+        let source = r#"
+            struct CreateUserInput { name: String }
+            enum ApiError { Failed }
+
+            fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {
+                return input
+            }
+
+            fn bad() -> Result<CreateUserInput, ApiError> {
+                return validate_user("Ada")?
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_BODY_0006");
+    }
+
+    #[test]
+    fn rejects_non_exhaustive_enum_match() {
+        let source = r#"
+            use std.http as Http
+
+            enum ApiError {
+                InvalidInput(message: String)
+                NotFound
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {
+                match err {
+                    InvalidInput(message) => return Http.Response.error(400, { "error": message })
+                }
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_BODY_0011");
     }
 
     fn diagnostics_for(file_name: &str, source: &str) -> Vec<are_diagnostics::Diagnostic> {

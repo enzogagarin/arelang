@@ -70,7 +70,7 @@ are run examples/hello_api
 
 `are new` creates a minimal HTTP server project with an `are.toml` manifest and a `main.are` file. The generated project starts with a single `GET /ping` route.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `?`, generic calls, object literals, field paths, and named arguments. Function bodies also get the first semantic checks for std HTTP calls, request JSON decoding, validation, route params, state access, return types, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `match`, `?`, generic calls, object literals, field paths, and named arguments. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, state access, return types, and `?` usage.
 
 `examples/hello_api` is the smallest runnable HTTP server. It listens on `127.0.0.1:8081` and responds to `GET /ping` from an Arelang function body.
 
@@ -78,7 +78,7 @@ are run examples/hello_api
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter.
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter. Validation can live in local Arelang functions, and service errors are raised as enum values before `Http.error_map(map_error)` maps them to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health

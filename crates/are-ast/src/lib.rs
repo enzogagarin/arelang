@@ -121,6 +121,11 @@ pub enum Stmt {
         value: Expr,
         range: SourceRange,
     },
+    Match {
+        value: Expr,
+        arms: Vec<MatchArm>,
+        range: SourceRange,
+    },
 }
 
 impl Stmt {
@@ -130,6 +135,40 @@ impl Stmt {
             Self::Let { range, .. } | Self::Expr { range, .. } | Self::Return { range, .. } => {
                 *range
             }
+            Self::Match { range, .. } => *range,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Box<Stmt>,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Pattern {
+    Variant {
+        name: String,
+        bindings: Vec<String>,
+        range: SourceRange,
+    },
+}
+
+impl Pattern {
+    #[must_use]
+    pub const fn range(&self) -> SourceRange {
+        match self {
+            Self::Variant { range, .. } => *range,
+        }
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Variant { name, .. } => name,
         }
     }
 }

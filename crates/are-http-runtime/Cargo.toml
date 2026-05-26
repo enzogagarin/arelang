@@ -10,9 +10,13 @@ rust-version.workspace = true
 are-ast = { path = "../are-ast" }
 are-interpreter = { path = "../are-interpreter" }
 are-project = { path = "../are-project" }
+are-semantics = { path = "../are-semantics" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tiny_http = "0.12"
+
+[dev-dependencies]
+are-diagnostics = { path = "../are-diagnostics" }
 
 [lints]
 workspace = true

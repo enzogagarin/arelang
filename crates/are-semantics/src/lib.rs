@@ -7,10 +7,6 @@ pub enum Builtin {
     ValidateEmail,
     ValidateLength,
     ContextParam,
-    StateUsersInsert,
-    StateUsersGet,
-    DbUsersInsert,
-    DbUsersGet,
 }
 
 impl Builtin {
@@ -24,12 +20,20 @@ impl Builtin {
             Self::ValidateEmail => "validate.email",
             Self::ValidateLength => "validate.length",
             Self::ContextParam => "ctx.param",
-            Self::StateUsersInsert => "ctx.state.users.insert",
-            Self::StateUsersGet => "ctx.state.users.get",
-            Self::DbUsersInsert => "ctx.db.users.insert",
-            Self::DbUsersGet => "ctx.db.users.get",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DbOperation {
+    Insert,
+    Get,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbCall<'a> {
+    pub collection: &'a str,
+    pub operation: DbOperation,
 }
 
 #[must_use]
@@ -42,17 +46,63 @@ pub fn builtin_by_callee(callee: &str) -> Option<Builtin> {
         "validate.email" => Some(Builtin::ValidateEmail),
         "validate.length" => Some(Builtin::ValidateLength),
         "ctx.param" => Some(Builtin::ContextParam),
-        "ctx.state.users.insert" => Some(Builtin::StateUsersInsert),
-        "ctx.state.users.get" => Some(Builtin::StateUsersGet),
-        "ctx.db.users.insert" => Some(Builtin::DbUsersInsert),
-        "ctx.db.users.get" => Some(Builtin::DbUsersGet),
         _ => None,
     }
 }
 
+#[must_use]
+pub fn db_call_by_callee(callee: &str) -> Option<DbCall<'_>> {
+    let mut parts = callee.split('.');
+    let ctx = parts.next()?;
+    let db = parts.next()?;
+    let collection = parts.next()?;
+    let operation = parts.next()?;
+    if parts.next().is_some() || ctx != "ctx" || db != "db" {
+        return None;
+    }
+
+    let operation = match operation {
+        "insert" => DbOperation::Insert,
+        "get" => DbOperation::Get,
+        _ => return None,
+    };
+
+    Some(DbCall {
+        collection,
+        operation,
+    })
+}
+
+#[must_use]
+pub fn collection_name_for_model(model_name: &str) -> String {
+    let base = lower_snake(model_name);
+    if base.ends_with('s') {
+        format!("{base}es")
+    } else {
+        format!("{base}s")
+    }
+}
+
+fn lower_snake(value: &str) -> String {
+    let mut output = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                output.push('_');
+            }
+            output.push(ch.to_ascii_lowercase());
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Builtin, builtin_by_callee};
+    use super::{
+        Builtin, DbOperation, builtin_by_callee, collection_name_for_model, db_call_by_callee,
+    };
 
     #[test]
     fn resolves_builtin_callees() {
@@ -64,12 +114,18 @@ mod tests {
             Builtin::ValidateEmail,
             Builtin::ValidateLength,
             Builtin::ContextParam,
-            Builtin::StateUsersInsert,
-            Builtin::StateUsersGet,
-            Builtin::DbUsersInsert,
-            Builtin::DbUsersGet,
         ] {
             assert_eq!(builtin_by_callee(builtin.callee()), Some(builtin));
         }
+    }
+
+    #[test]
+    fn resolves_model_db_callees() {
+        let call = db_call_by_callee("ctx.db.users.insert").expect("db call");
+        assert_eq!(call.collection, "users");
+        assert_eq!(call.operation, DbOperation::Insert);
+        assert!(db_call_by_callee("ctx.state.users.insert").is_none());
+        assert_eq!(collection_name_for_model("User"), "users");
+        assert_eq!(collection_name_for_model("BlogPost"), "blog_posts");
     }
 }

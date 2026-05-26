@@ -68,6 +68,7 @@ Output:
 - route body contract checks: done
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
+- model database call checks for `ctx.db.<collection>.insert/get`: started
 - typed path parameter contract checks: done
 - function body checker module split: done
 
@@ -100,6 +101,7 @@ Output:
 - local server runner: done for `users_api`
 - request/response runtime types: started
 - JSON decode/encode MVP: done for local structs/models with primitive fields
+- model-backed in-memory store: started for primary-key `insert/get`
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
 - route response contracts: done for `returns Payload status N`
@@ -115,7 +117,8 @@ Definition of done:
 - canonical route contracts with method shorthand, typed path params, and request body declarations: done
 - successful HTTP responses are validated against declared `returns` and `status` contracts: done
 - successful domain payloads are wrapped into HTTP responses by the route contract: done
-- function body interpreter replaces the temporary users API adapter
+- function body interpreter replaces the temporary users API adapter: done
+- `ctx.db.users` is resolved from `model User` rather than a users-only runtime adapter: done
 
 ## Milestone 5: Backend Quality Loop
 

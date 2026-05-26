@@ -27,6 +27,7 @@ Current implementation status:
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
 - `are run` prints the service URL and route table before accepting requests
+- `ctx.db.<collection>.insert/get` is backed by local `model` declarations in the MVP in-memory store
 
 ## Handler Shape
 
@@ -88,6 +89,7 @@ The compiler should check:
 - body contracts such as `body CreateUserInput` are decoded through matching `req.json<CreateUserInput>()`
 - response contracts such as `returns User` name a known JSON payload type and match handler domain return types
 - status contracts such as `status 201` use valid HTTP status codes and match explicit success response constructors when a handler still returns `Http.Response`
+- model database calls such as `ctx.db.users.insert(input)` resolve `users` from `model User`
 - duplicate method/path pairs are rejected
 
 At runtime, domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.

@@ -4,7 +4,7 @@ mod error;
 mod host;
 mod value;
 
-use are_semantics::{Builtin, builtin_by_callee};
+use are_semantics::{Builtin, DbCall, DbOperation, builtin_by_callee, db_call_by_callee};
 pub use error::InterpretError;
 pub use host::Host;
 use host::NoopHost;
@@ -288,10 +288,6 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                 let max = self.named_i64_arg(&callee_name, args, "max")?;
                 self.host.validate_length(&value, min, max).map(Value::Bool)
             }
-            Some(Builtin::StateUsersInsert | Builtin::DbUsersInsert) => {
-                let input = self.single_json_arg(&callee_name, args)?;
-                self.host.insert_user(input).map(Value::Json)
-            }
             Some(Builtin::ContextParam) => {
                 let name = self.single_string_arg(&callee_name, args)?;
                 let type_name = type_args.first().and_then(type_expr_name);
@@ -299,17 +295,36 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                     .read_path_param(type_name.as_deref(), &name)
                     .map(Value::Json)
             }
-            Some(Builtin::StateUsersGet | Builtin::DbUsersGet) => {
-                let id = self.single_json_arg(&callee_name, args)?;
-                self.host.get_user(id).map(Value::Json)
-            }
             None => {
+                if let Some(db_call) = db_call_by_callee(&callee_name) {
+                    return self.eval_db_call(db_call, &callee_name, args);
+                }
+
                 if let Some(value) = self.eval_enum_constructor(callee, args)? {
                     return Ok(value);
                 }
 
                 self.eval_user_function_call(&callee_name, args)
             }
+        }
+    }
+
+    fn eval_db_call(
+        &mut self,
+        db_call: DbCall<'_>,
+        callee_name: &str,
+        args: &[CallArg],
+    ) -> Result<Value, InterpretError> {
+        let value = self.single_json_arg(callee_name, args)?;
+        match db_call.operation {
+            DbOperation::Insert => self
+                .host
+                .insert_model(db_call.collection, value)
+                .map(Value::Json),
+            DbOperation::Get => self
+                .host
+                .get_model(db_call.collection, value)
+                .map(Value::Json),
         }
     }
 
@@ -776,10 +791,17 @@ mod tests {
             Ok((min..=max).contains(&len))
         }
 
-        fn insert_user(
+        fn insert_model(
             &mut self,
+            collection: &str,
             input: serde_json::Value,
         ) -> Result<serde_json::Value, InterpretError> {
+            if collection != "users" {
+                return Err(InterpretError::UnsupportedExpression(format!(
+                    "ctx.db.{collection}.insert"
+                )));
+            }
+
             self.next_id += 1;
             let user = serde_json::json!({
                 "id": self.next_id,
@@ -809,7 +831,17 @@ mod tests {
             Ok(serde_json::Value::String(value.clone()))
         }
 
-        fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
+        fn get_model(
+            &mut self,
+            collection: &str,
+            id: serde_json::Value,
+        ) -> Result<serde_json::Value, InterpretError> {
+            if collection != "users" {
+                return Err(InterpretError::UnsupportedExpression(format!(
+                    "ctx.db.{collection}.get"
+                )));
+            }
+
             let Some(id) = id.as_u64() else {
                 return Err(api_invalid_input("invalid_id"));
             };

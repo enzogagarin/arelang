@@ -265,6 +265,39 @@ fn accepts_domain_return_handlers_from_route_contracts() {
 }
 
 #[test]
+fn accepts_model_db_calls_for_non_user_collections() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct CreatePostInput { title: String }
+            model Post {
+                id: U64 primary
+                title: String
+            }
+            enum ApiError { Failed }
+
+            fn create_post(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Post, ApiError> {
+                let input = req.json<CreatePostInput>()?
+                let post = ctx.db.posts.insert(input)?
+                return post
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {
+                return Http.Response.error(500, { "error": "failed" })
+            }
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                post "/posts" body CreatePostInput -> create_post returns Post status 201
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
 fn rejects_invalid_result_arity() {
     let source = r#"
             use std.http as Http

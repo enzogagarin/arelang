@@ -29,12 +29,16 @@ pub trait Host {
         max: i64,
     ) -> Result<bool, InterpretError>;
 
-    /// Insert a user-like JSON value into host state.
+    /// Insert a model-like JSON value into host state.
     ///
     /// # Errors
     ///
     /// Returns an error when the host cannot persist the value.
-    fn insert_user(&mut self, input: JsonValue) -> Result<JsonValue, InterpretError>;
+    fn insert_model(
+        &mut self,
+        collection: &str,
+        input: JsonValue,
+    ) -> Result<JsonValue, InterpretError>;
 
     /// Read a route path parameter by name.
     ///
@@ -48,12 +52,12 @@ pub trait Host {
         name: &str,
     ) -> Result<JsonValue, InterpretError>;
 
-    /// Read a user-like JSON value from host state.
+    /// Read a model-like JSON value from host state.
     ///
     /// # Errors
     ///
     /// Returns an error when the id is invalid or the value does not exist.
-    fn get_user(&mut self, id: JsonValue) -> Result<JsonValue, InterpretError>;
+    fn get_model(&mut self, collection: &str, id: JsonValue) -> Result<JsonValue, InterpretError>;
 }
 
 pub(crate) struct NoopHost;
@@ -80,10 +84,14 @@ impl Host for NoopHost {
         ))
     }
 
-    fn insert_user(&mut self, _input: JsonValue) -> Result<JsonValue, InterpretError> {
-        Err(InterpretError::UnsupportedExpression(
-            "ctx.db.users.insert".into(),
-        ))
+    fn insert_model(
+        &mut self,
+        collection: &str,
+        _input: JsonValue,
+    ) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression(format!(
+            "ctx.db.{collection}.insert"
+        )))
     }
 
     fn read_path_param(
@@ -94,9 +102,9 @@ impl Host for NoopHost {
         Err(InterpretError::UnsupportedExpression("ctx.param".into()))
     }
 
-    fn get_user(&mut self, _id: JsonValue) -> Result<JsonValue, InterpretError> {
-        Err(InterpretError::UnsupportedExpression(
-            "ctx.db.users.get".into(),
-        ))
+    fn get_model(&mut self, collection: &str, _id: JsonValue) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression(format!(
+            "ctx.db.{collection}.get"
+        )))
     }
 }

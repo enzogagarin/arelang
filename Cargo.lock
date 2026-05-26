@@ -95,8 +95,10 @@ name = "are-http-runtime"
 version = "0.1.0"
 dependencies = [
  "are-ast",
+ "are-diagnostics",
  "are-interpreter",
  "are-project",
+ "are-semantics",
  "serde",
  "serde_json",
  "tiny_http",

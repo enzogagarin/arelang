@@ -1,13 +1,15 @@
 use are_ast::{
-    Field, FunctionDecl, Item, ModelDecl, ModelField, Module, RouteDecl, ServiceDecl, StructDecl,
-    TypeDecl, TypeExpr,
+    Field, FunctionDecl, Item, ModelDecl, ModelField, ModelFieldAttr, Module, RouteDecl,
+    ServiceDecl, StructDecl, TypeDecl, TypeExpr,
 };
 use are_interpreter::{
     Host, InterpretError, Value as InterpretedValue, interpret_function_with_host_and_args,
     interpret_function_with_host_and_functions,
 };
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
+use are_semantics::collection_name_for_model;
 use serde::Serialize;
+use serde_json::Map;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -233,7 +235,7 @@ fn run_http_server(
     root: &Path,
     manifest: &Manifest,
 ) {
-    let state = UsersApiState::default();
+    let state = RuntimeState::default();
 
     for request in server.incoming_requests() {
         let result = handle_tiny_request(request, &state, routes, functions);
@@ -249,7 +251,7 @@ fn run_http_server(
 
 fn handle_tiny_request(
     mut request: Request,
-    state: &UsersApiState,
+    state: &RuntimeState,
     routes: &RuntimeRoutes,
     functions: &RuntimeFunctions,
 ) -> Result<(), RuntimeError> {
@@ -268,7 +270,7 @@ fn handle_tiny_request(
 }
 
 fn test_ping_scenario(prepared: &PreparedProject) -> Result<TestScenario, RuntimeError> {
-    let state = UsersApiState::default();
+    let state = RuntimeState::default();
     let response = runtime_response(
         &state,
         &prepared.routes,
@@ -291,7 +293,7 @@ fn test_ping_scenario(prepared: &PreparedProject) -> Result<TestScenario, Runtim
 }
 
 fn test_users_scenario(prepared: &PreparedProject) -> Result<TestScenario, RuntimeError> {
-    let state = UsersApiState::default();
+    let state = RuntimeState::default();
     let mut checks = Vec::new();
 
     let health = runtime_response(
@@ -572,21 +574,19 @@ fn services_in_module(module: &Module) -> impl Iterator<Item = &ServiceDecl> {
 }
 
 #[derive(Debug, Default)]
-struct UsersApiState {
-    inner: Arc<Mutex<UsersApiInner>>,
+struct RuntimeState {
+    inner: Arc<Mutex<RuntimeStateInner>>,
 }
 
 #[derive(Debug, Default)]
-struct UsersApiInner {
-    next_id: u64,
-    users: HashMap<u64, User>,
+struct RuntimeStateInner {
+    stores: HashMap<String, RuntimeModelStore>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct User {
-    id: u64,
-    email: String,
-    name: String,
+#[derive(Debug, Default)]
+struct RuntimeModelStore {
+    next_id: u64,
+    records: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -630,6 +630,12 @@ impl RuntimeSchemas {
         };
 
         self.validate_value(type_name, &value)
+    }
+
+    fn model_for_collection(&self, collection: &str) -> Option<&ModelDecl> {
+        self.models
+            .values()
+            .find(|model| collection_name_for_model(&model.name) == collection)
     }
 
     fn validate_value(&self, type_name: &str, value: &serde_json::Value) -> bool {
@@ -745,6 +751,18 @@ impl RuntimeSchemas {
 
         self.primitive_root(&path.segments[0])
     }
+
+    fn type_expr_primitive_root(&self, ty: &TypeExpr) -> Option<String> {
+        let TypeExpr::Path { path } = ty else {
+            return None;
+        };
+
+        if path.segments.len() != 1 {
+            return None;
+        }
+
+        self.primitive_root(&path.segments[0])
+    }
 }
 
 #[derive(Debug)]
@@ -754,7 +772,7 @@ struct RuntimeResponse {
 }
 
 fn runtime_response(
-    state: &UsersApiState,
+    state: &RuntimeState,
     routes: &RuntimeRoutes,
     functions: &RuntimeFunctions,
     method: &Method,
@@ -819,7 +837,7 @@ fn apply_route_response_contract(
 }
 
 fn interpreted_response(
-    state: &UsersApiState,
+    state: &RuntimeState,
     functions: &RuntimeFunctions,
     error_mapper: Option<&str>,
     route: &RuntimeRoute,
@@ -830,7 +848,7 @@ fn interpreted_response(
     let Some(function) = functions.get(handler) else {
         return error_response(500, "handler_not_found");
     };
-    let mut host = UsersApiHost {
+    let mut host = RuntimeHost {
         state,
         params,
         request_body: body,
@@ -873,7 +891,7 @@ fn interpreted_response(
 fn mapped_error_response(
     functions: &RuntimeFunctions,
     error_mapper: Option<&str>,
-    host: &mut UsersApiHost<'_>,
+    host: &mut RuntimeHost<'_>,
     error: are_interpreter::EnumValue,
 ) -> RuntimeResponse {
     let Some(mapper_name) = error_mapper else {
@@ -910,14 +928,63 @@ fn mapped_error_response(
     }
 }
 
-struct UsersApiHost<'a> {
-    state: &'a UsersApiState,
+struct RuntimeHost<'a> {
+    state: &'a RuntimeState,
     params: &'a HashMap<String, String>,
     request_body: &'a str,
     schemas: &'a RuntimeSchemas,
 }
 
-impl Host for UsersApiHost<'_> {
+impl RuntimeHost<'_> {
+    fn build_model_record(
+        &self,
+        model: &ModelDecl,
+        input: &serde_json::Value,
+        generated_id: u64,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let Some(input) = input.as_object() else {
+            return Err(api_invalid_input("invalid_json"));
+        };
+
+        let mut record = Map::new();
+        for field in &model.fields {
+            if model_field_has_attr(field, ModelFieldAttr::Primary) {
+                record.insert(
+                    field.name.clone(),
+                    self.generated_primary_value(field, generated_id)?,
+                );
+                continue;
+            }
+
+            if let Some(value) = input.get(&field.name) {
+                record.insert(field.name.clone(), value.clone());
+            } else if !type_expr_is_optional(&field.ty) {
+                return Err(api_invalid_input("invalid_json"));
+            }
+        }
+
+        Ok(serde_json::Value::Object(record))
+    }
+
+    fn generated_primary_value(
+        &self,
+        field: &ModelField,
+        id: u64,
+    ) -> Result<serde_json::Value, InterpretError> {
+        match self.schemas.type_expr_primitive_root(&field.ty).as_deref() {
+            Some("String" | "Text") => Ok(serde_json::Value::String(id.to_string())),
+            Some("I64" | "Int") => i64::try_from(id)
+                .map(serde_json::Value::from)
+                .map_err(|_| api_invalid_input("invalid_id")),
+            Some("F64") => Err(InterpretError::UnsupportedExpression(
+                "F64 primary ids are not supported by the MVP store".into(),
+            )),
+            Some(_) | None => Ok(serde_json::Value::from(id)),
+        }
+    }
+}
+
+impl Host for RuntimeHost<'_> {
     fn read_json_body(
         &mut self,
         type_name: Option<&str>,
@@ -958,33 +1025,32 @@ impl Host for UsersApiHost<'_> {
         Ok((min..=max).contains(&len))
     }
 
-    fn insert_user(
+    fn insert_model(
         &mut self,
+        collection: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, InterpretError> {
-        let email = input
-            .get("email")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| api_invalid_input("invalid_json"))?;
-        let name = input
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| api_invalid_input("invalid_json"))?;
+        let model = self
+            .schemas
+            .model_for_collection(collection)
+            .ok_or_else(|| InterpretError::UnsupportedExpression(format!("ctx.db.{collection}")))?;
 
         let mut inner = self
             .state
             .inner
             .lock()
-            .expect("users api state lock poisoned");
-        inner.next_id += 1;
-        let user = User {
-            id: inner.next_id,
-            email: email.to_string(),
-            name: name.to_string(),
-        };
-        inner.users.insert(user.id, user.clone());
+            .expect("runtime state lock poisoned");
+        let store = inner.stores.entry(collection.to_string()).or_default();
+        store.next_id += 1;
 
-        Ok(serde_json::to_value(user).expect("user serializes"))
+        let record = self.build_model_record(model, &input, store.next_id)?;
+        if !self.schemas.validate_model_fields(&model.fields, &record) {
+            return Err(api_invalid_input("invalid_json"));
+        }
+
+        let key = primary_record_key(model, &record)?;
+        store.records.insert(key, record.clone());
+        Ok(record)
     }
 
     fn read_path_param(
@@ -999,21 +1065,30 @@ impl Host for UsersApiHost<'_> {
         self.schemas.decode_path_param(type_name, name, value)
     }
 
-    fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
-        let Some(id) = id.as_u64() else {
-            return Err(api_invalid_input("invalid_id"));
-        };
+    fn get_model(
+        &mut self,
+        collection: &str,
+        id: serde_json::Value,
+    ) -> Result<serde_json::Value, InterpretError> {
+        self.schemas
+            .model_for_collection(collection)
+            .ok_or_else(|| InterpretError::UnsupportedExpression(format!("ctx.db.{collection}")))?;
+        let key = json_key(&id).ok_or_else(|| api_invalid_input("invalid_id"))?;
 
         let inner = self
             .state
             .inner
             .lock()
-            .expect("users api state lock poisoned");
-        let Some(user) = inner.users.get(&id) else {
+            .expect("runtime state lock poisoned");
+        let Some(record) = inner
+            .stores
+            .get(collection)
+            .and_then(|store| store.records.get(&key))
+        else {
             return Err(InterpretError::raised_api_error("NotFound", Vec::new()));
         };
 
-        Ok(serde_json::to_value(user).expect("user serializes"))
+        Ok(record.clone())
     }
 }
 
@@ -1021,6 +1096,43 @@ fn error_response(status: u16, error: &str) -> RuntimeResponse {
     RuntimeResponse {
         status,
         body: serde_json::json!({ "error": error }),
+    }
+}
+
+fn primary_record_key(
+    model: &ModelDecl,
+    record: &serde_json::Value,
+) -> Result<String, InterpretError> {
+    let Some(primary) = model
+        .fields
+        .iter()
+        .find(|field| model_field_has_attr(field, ModelFieldAttr::Primary))
+    else {
+        return Err(InterpretError::UnsupportedExpression(format!(
+            "model {} has no primary field",
+            model.name
+        )));
+    };
+
+    let Some(value) = record.get(&primary.name) else {
+        return Err(api_invalid_input("invalid_id"));
+    };
+
+    json_key(value).ok_or_else(|| api_invalid_input("invalid_id"))
+}
+
+fn model_field_has_attr(field: &ModelField, attr: ModelFieldAttr) -> bool {
+    field.attrs.contains(&attr)
+}
+
+fn json_key(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            None
+        }
     }
 }
 
@@ -1162,10 +1274,14 @@ fn is_primitive_type(type_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeFunctions, RuntimeRoutes, UsersApiState, find_single_service, match_route,
-        route_summary_line, runtime_response, test_project,
+        RuntimeFunctions, RuntimeHost, RuntimeRoutes, RuntimeSchemas, RuntimeState,
+        find_single_service, match_route, route_summary_line, runtime_response, test_project,
     };
+    use are_ast::{ModelDecl, ModelField, ModelFieldAttr, Path as AstPath, TypeExpr};
+    use are_diagnostics::{Position, SourceRange};
+    use are_interpreter::Host;
     use are_project::check_path;
+    use std::collections::HashMap;
     use std::path::Path;
     use tiny_http::Method;
 
@@ -1196,7 +1312,7 @@ mod tests {
 
     #[test]
     fn handles_users_api_flow() {
-        let state = UsersApiState::default();
+        let state = RuntimeState::default();
         let routes = RuntimeRoutes {
             routes: vec![
                 route(
@@ -1259,8 +1375,35 @@ mod tests {
     }
 
     #[test]
+    fn runtime_store_uses_model_collection_contracts() {
+        let schemas = RuntimeSchemas {
+            models: [("Post".to_string(), model_decl("Post", "title"))].into(),
+            ..RuntimeSchemas::default()
+        };
+        let state = RuntimeState::default();
+        let params = HashMap::new();
+        let mut host = RuntimeHost {
+            state: &state,
+            params: &params,
+            request_body: "",
+            schemas: &schemas,
+        };
+
+        let created = host
+            .insert_model("posts", serde_json::json!({ "title": "Hello" }))
+            .expect("post inserts");
+        assert_eq!(created["id"], 1);
+        assert_eq!(created["title"], "Hello");
+
+        let fetched = host
+            .get_model("posts", serde_json::json!(1))
+            .expect("post fetches");
+        assert_eq!(fetched, created);
+    }
+
+    #[test]
     fn handles_minimal_hello_api_flow() {
-        let state = UsersApiState::default();
+        let state = RuntimeState::default();
         let check = check_path(Path::new("../../examples/hello_api")).expect("project checks");
         assert!(check.ok(), "{:#?}", check.diagnostics);
         let service = find_single_service(&check.modules).expect("single service");
@@ -1313,6 +1456,37 @@ mod tests {
             response_type: response_type.map(str::to_string),
             status,
             handler: handler.to_string(),
+        }
+    }
+
+    fn model_decl(name: &str, text_field: &str) -> ModelDecl {
+        let range = SourceRange::new(Position::new(1, 1), Position::new(1, 1));
+        ModelDecl {
+            name: name.to_string(),
+            fields: vec![
+                ModelField {
+                    name: "id".to_string(),
+                    ty: type_path("U64", range),
+                    attrs: vec![ModelFieldAttr::Primary],
+                    range,
+                },
+                ModelField {
+                    name: text_field.to_string(),
+                    ty: type_path("String", range),
+                    attrs: Vec::new(),
+                    range,
+                },
+            ],
+            range,
+        }
+    }
+
+    fn type_path(name: &str, range: SourceRange) -> TypeExpr {
+        TypeExpr::Path {
+            path: AstPath {
+                segments: vec![name.to_string()],
+                range,
+            },
         }
     }
 }

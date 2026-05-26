@@ -68,6 +68,7 @@ Current `are check` behavior:
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
 - typecheck function signatures, generic arity, route handlers, route body contracts, route response/status contracts, typed path params, and HTTP error mappers
+- resolve model database calls such as `ctx.db.users.insert` from local `model User` declarations
 - emit human or JSON diagnostics
 
 Compiler implementation hygiene:
@@ -92,6 +93,7 @@ Current `are run` behavior:
 - run static checks
 - extract the checked service route registry
 - wrap domain payload handler results using the route response/status contract
+- persist MVP model data through the model-backed in-memory store
 - validate route-level body, path, response, and status contracts at the host boundary
 - start the embedded HTTP MVP runtime
 

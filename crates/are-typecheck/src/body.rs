@@ -4,7 +4,9 @@ use are_ast::{
     StructDecl, TypeDecl, TypeExpr,
 };
 use are_diagnostics::{Diagnostic, SourceRange, best_name_suggestion};
-use are_semantics::{Builtin, builtin_by_callee};
+use are_semantics::{
+    Builtin, DbCall, DbOperation, builtin_by_callee, collection_name_for_model, db_call_by_callee,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::Path as FsPath;
 
@@ -505,6 +507,10 @@ impl BodyChecker<'_> {
             return self.check_builtin_call(builtin, &callee_name, type_args, args, range);
         }
 
+        if let Some(db_call) = db_call_by_callee(&callee_name) {
+            return self.check_db_call(db_call, &callee_name, type_args, args, range);
+        }
+
         if let Some(enum_value) = self.check_enum_constructor(callee, type_args, args, range) {
             return enum_value;
         }
@@ -624,14 +630,43 @@ impl BodyChecker<'_> {
                 let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)
             }
-            Builtin::StateUsersInsert
-            | Builtin::StateUsersGet
-            | Builtin::DbUsersInsert
-            | Builtin::DbUsersGet => {
-                self.expect_positional_arity(callee_name, args, 1, range);
-                self.check_positional_arg(args, 0);
-                self.result_type(self.named_or_unknown("User"))
-            }
+        }
+    }
+
+    fn check_db_call(
+        &mut self,
+        db_call: DbCall<'_>,
+        callee_name: &str,
+        type_args: &[TypeExpr],
+        args: &[CallArg],
+        range: SourceRange,
+    ) -> BodyType {
+        if !type_args.is_empty() {
+            self.error(
+                "E_BODY_0014",
+                range,
+                format!(
+                    "`{callee_name}` does not accept type argument(s), got {}",
+                    type_args.len()
+                ),
+                "model database calls infer their payload type from the collection name",
+            );
+        }
+
+        let Some(model_name) = self.model_name_for_collection(db_call.collection) else {
+            self.error(
+                "E_BODY_0019",
+                range,
+                format!("unknown model collection `{}`", db_call.collection),
+                "declare a model whose collection matches this ctx.db path, such as `model User` for `ctx.db.users`",
+            );
+            return BodyType::Unknown;
+        };
+
+        self.expect_positional_arity(callee_name, args, 1, range);
+        self.check_positional_arg(args, 0);
+        match db_call.operation {
+            DbOperation::Insert | DbOperation::Get => self.result_type(BodyType::Named(model_name)),
         }
     }
 
@@ -1131,15 +1166,11 @@ impl BodyChecker<'_> {
         }
     }
 
-    fn named_or_unknown(&self, name: &str) -> BodyType {
-        if self.structs.contains_key(name)
-            || self.models.contains_key(name)
-            || self.types.contains_key(name)
-        {
-            BodyType::Named(name.to_string())
-        } else {
-            BodyType::Unknown
-        }
+    fn model_name_for_collection(&self, collection: &str) -> Option<String> {
+        self.models
+            .keys()
+            .find(|model_name| collection_name_for_model(model_name) == collection)
+            .cloned()
     }
 
     fn error(

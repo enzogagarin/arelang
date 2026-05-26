@@ -1,3 +1,4 @@
+use crate::request::RuntimeRequest;
 use crate::response::{RuntimeResponse, runtime_response};
 use crate::store::RuntimeState;
 use crate::{PreparedProject, RuntimeError, TestScenario};
@@ -9,9 +10,7 @@ pub(crate) fn test_ping_scenario(prepared: &PreparedProject) -> Result<TestScena
         &state,
         &prepared.contracts,
         &prepared.functions,
-        &Method::Get,
-        "/ping",
-        "",
+        &RuntimeRequest::new(Method::Get, "/ping", ""),
     );
 
     expect_status(&response, 200, "GET /ping")?;
@@ -36,9 +35,7 @@ pub(crate) fn test_users_scenario(
         &state,
         &prepared.contracts,
         &prepared.functions,
-        &Method::Get,
-        "/health",
-        "",
+        &RuntimeRequest::new(Method::Get, "/health", ""),
     );
     expect_status(&health, 200, "GET /health")?;
     expect_json_string(&health, "status", "ok", "GET /health")?;
@@ -48,9 +45,11 @@ pub(crate) fn test_users_scenario(
         &state,
         &prepared.contracts,
         &prepared.functions,
-        &Method::Post,
-        "/users",
-        r#"{"email":"invalid","name":"Ada"}"#,
+        &RuntimeRequest::new(
+            Method::Post,
+            "/users",
+            r#"{"email":"invalid","name":"Ada"}"#,
+        ),
     );
     expect_status(&invalid, 400, "POST /users invalid email")?;
     expect_json_string(
@@ -65,9 +64,11 @@ pub(crate) fn test_users_scenario(
         &state,
         &prepared.contracts,
         &prepared.functions,
-        &Method::Post,
-        "/users",
-        r#"{"email":"ada@example.com","name":"Ada Lovelace"}"#,
+        &RuntimeRequest::new(
+            Method::Post,
+            "/users",
+            r#"{"email":"ada@example.com","name":"Ada Lovelace"}"#,
+        ),
     );
     expect_status(&created, 201, "POST /users")?;
     expect_json_u64(&created, "id", 1, "POST /users")?;
@@ -78,9 +79,7 @@ pub(crate) fn test_users_scenario(
         &state,
         &prepared.contracts,
         &prepared.functions,
-        &Method::Get,
-        "/users/1",
-        "",
+        &RuntimeRequest::new(Method::Get, "/users/1", ""),
     );
     expect_status(&fetched, 200, "GET /users/1")?;
     expect_json_string(&fetched, "name", "Ada Lovelace", "GET /users/1")?;

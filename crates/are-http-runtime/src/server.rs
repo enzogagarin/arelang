@@ -1,6 +1,7 @@
 use crate::RuntimeError;
 use crate::contracts::{HttpContractManifest, route_summary_line};
 use crate::functions::RuntimeFunctions;
+use crate::request::RuntimeRequest;
 use crate::response::runtime_response;
 use crate::store::RuntimeState;
 use are_project::Manifest;
@@ -58,7 +59,8 @@ fn handle_tiny_request(
         .read_to_string(&mut body)
         .map_err(|err| RuntimeError::Server(format!("failed to read request body: {err}")))?;
 
-    let response = runtime_response(state, contracts, functions, &method, &url, &body);
+    let runtime_request = RuntimeRequest::new(method, url, body);
+    let response = runtime_response(state, contracts, functions, &runtime_request);
     request
         .respond(json_response(response.status, &response.body))
         .map_err(|err| RuntimeError::Server(format!("failed to write response: {err}")))

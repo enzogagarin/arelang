@@ -95,6 +95,7 @@ Current `are run` behavior:
 - run static checks
 - extract the checked service route registry
 - build the checked HTTP contract manifest from the service declaration
+- normalize incoming HTTP requests into the MVP runtime request type
 - wrap domain payload handler results using the route response/status contract
 - persist MVP model data through the model-backed in-memory store
 - validate route-level body, path, response, and status contracts at the host boundary

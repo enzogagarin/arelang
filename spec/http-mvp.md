@@ -26,6 +26,7 @@ Current implementation status:
 - runtime preparation builds one checked HTTP contract manifest for service, routes, body types, response types, statuses, typed params, handlers, and the error mapper
 - `are inspect --json` exposes that checked HTTP contract manifest without starting the server
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, response contracts, and success status contracts
+- incoming requests and outgoing responses pass through explicit MVP runtime request/response types
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
 - `are run` prints the service URL and route table before accepting requests

@@ -2,6 +2,7 @@ mod contracts;
 mod errors;
 mod functions;
 mod host;
+mod request;
 mod response;
 mod scenarios;
 mod schemas;

@@ -1,13 +1,13 @@
 use crate::contracts::{HttpContractManifest, HttpRouteContract};
 use crate::functions::RuntimeFunctions;
 use crate::host::RuntimeHost;
+use crate::request::RuntimeRequest;
 use crate::store::RuntimeState;
 use are_interpreter::{
     Value as InterpretedValue, interpret_function_with_host_and_args,
     interpret_function_with_host_and_functions,
 };
 use std::collections::HashMap;
-use tiny_http::Method;
 
 #[derive(Debug)]
 pub(crate) struct RuntimeResponse {
@@ -19,17 +19,16 @@ pub(crate) fn runtime_response(
     state: &RuntimeState,
     contracts: &HttpContractManifest,
     functions: &RuntimeFunctions,
-    method: &Method,
-    url: &str,
-    body: &str,
+    request: &RuntimeRequest,
 ) -> RuntimeResponse {
-    let path = strip_query(url);
-    let Some((route, params)) = contracts.route_for(method, path) else {
+    let Some((route, params)) = contracts.route_for(&request.method, request.path()) else {
         return error_response(404, "not_found");
     };
 
     if let Some(body_type) = &route.body_type
-        && !functions.schemas.validate_json_body(body_type, body)
+        && !functions
+            .schemas
+            .validate_json_body(body_type, &request.body)
     {
         return error_response(400, "invalid_json");
     }
@@ -41,7 +40,7 @@ pub(crate) fn runtime_response(
         route,
         &route.handler,
         &params,
-        body,
+        &request.body,
     );
     apply_route_response_contract(route, functions, response)
 }
@@ -177,8 +176,4 @@ pub(crate) fn error_response(status: u16, error: &str) -> RuntimeResponse {
         status,
         body: serde_json::json!({ "error": error }),
     }
-}
-
-fn strip_query(url: &str) -> &str {
-    url.split_once('?').map_or(url, |(path, _query)| path)
 }

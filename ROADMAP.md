@@ -95,14 +95,16 @@ Definition of done:
 
 ## Milestone 4: HTTP Runtime
 
+Status: complete for the HTTP MVP.
+
 Output:
 
 - `service` route registry: done for one-service MVP projects
 - checked HTTP contract manifest: done for service, routes, body, response, status, typed params, handlers, and error mapper
 - local server runner: done for `users_api`
-- request/response runtime types: started
+- request/response runtime types: done for the MVP HTTP boundary
 - JSON decode/encode MVP: done for local structs/models with primitive fields
-- model-backed in-memory store: started for primary-key `insert/get`
+- model-backed in-memory store: done for primary-key `insert/get`
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
 - route response contracts: done for `returns Payload status N`
@@ -124,22 +126,24 @@ Definition of done:
 
 ## Milestone 5: Backend Quality Loop
 
+Status: complete for the HTTP MVP.
+
 Output:
 
 - `are fmt`: done for parsed MVP syntax
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
 - `are check --json`: done
-- diagnostic fix suggestions: started
+- diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done
-- users API tests: started
+- users API tests: done through built-in scenarios, generated-template smoke, and real HTTP smoke
 - generated users API template: done
 - MVP smoke script in CI: done
 - pinned Rust toolchain for reproducible CI: done
 
 Definition of done:
 
-- generated code can be checked, formatted, run, and tested in one loop
+- generated code can be checked, formatted, inspected, run, and tested in one loop: done
 
 ## Milestone 6: Safety And Production Shape
 

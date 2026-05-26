@@ -3,6 +3,7 @@ use crate::contracts::{
 };
 use crate::functions::RuntimeFunctions;
 use crate::host::RuntimeHost;
+use crate::request::RuntimeRequest;
 use crate::response::runtime_response;
 use crate::schemas::RuntimeSchemas;
 use crate::store::RuntimeState;
@@ -22,6 +23,12 @@ fn matches_named_route_params() {
 
     let params = match_route("/users/{id: UserId}", "/users/42").expect("route matches");
     assert_eq!(params.get("id").expect("id"), "42");
+}
+
+#[test]
+fn runtime_request_exposes_path_without_query() {
+    let request = RuntimeRequest::new(Method::Get, "/users/1?expand=posts", "");
+    assert_eq!(request.path(), "/users/1");
 }
 
 #[test]
@@ -106,7 +113,12 @@ fn handles_users_api_flow() {
     };
     let functions = users_api_functions();
 
-    let health = runtime_response(&state, &contracts, &functions, &Method::Get, "/health", "");
+    let health = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/health", ""),
+    );
     assert_eq!(health.status, 200);
     assert_eq!(health.body["status"], "ok");
 
@@ -114,9 +126,11 @@ fn handles_users_api_flow() {
         &state,
         &contracts,
         &functions,
-        &Method::Post,
-        "/users",
-        r#"{"email":"ada@example.com","name":"Ada"}"#,
+        &request(
+            Method::Post,
+            "/users",
+            r#"{"email":"ada@example.com","name":"Ada"}"#,
+        ),
     );
     assert_eq!(created.status, 201);
 
@@ -124,14 +138,21 @@ fn handles_users_api_flow() {
         &state,
         &contracts,
         &functions,
-        &Method::Post,
-        "/users",
-        r#"{"email":"invalid","name":"Ada"}"#,
+        &request(
+            Method::Post,
+            "/users",
+            r#"{"email":"invalid","name":"Ada"}"#,
+        ),
     );
     assert_eq!(invalid.status, 400);
     assert_eq!(invalid.body["error"], "invalid_email");
 
-    let fetched = runtime_response(&state, &contracts, &functions, &Method::Get, "/users/1", "");
+    let fetched = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/1", ""),
+    );
     assert_eq!(fetched.status, 200);
     assert_eq!(fetched.body["email"], "ada@example.com");
 }
@@ -172,7 +193,12 @@ fn handles_minimal_hello_api_flow() {
     let contracts = HttpContractManifest::from_service(service).expect("contracts");
     let functions = RuntimeFunctions::from_modules(&check.modules);
 
-    let ping = runtime_response(&state, &contracts, &functions, &Method::Get, "/ping", "");
+    let ping = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/ping", ""),
+    );
     assert_eq!(ping.status, 200);
     assert_eq!(ping.body["message"], "pong");
 }
@@ -220,6 +246,10 @@ fn route(
         path_params: Vec::new(),
         handler: handler.to_string(),
     }
+}
+
+fn request(method: Method, url: &str, body: &str) -> RuntimeRequest {
+    RuntimeRequest::new(method, url, body)
 }
 
 fn model_decl(name: &str, text_field: &str) -> ModelDecl {

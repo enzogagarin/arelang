@@ -41,9 +41,11 @@ are build --release
 
 ## Current Bootstrap Commands
 
-From the repository root, the current demo is intentionally a small set of commands:
+From the repository root, the current demos are intentionally a small set of commands:
 
 ```sh
+cargo run -p are-cli -- check examples/hello_api
+cargo run -p are-cli -- run examples/hello_api
 cargo run -p are-cli -- check examples/users_api
 cargo run -p are-cli -- check examples/users_api --json
 cargo run -p are-cli -- run examples/users_api
@@ -52,7 +54,13 @@ cargo test
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `?`, generic calls, object literals, field paths, and named arguments.
 
-`are run examples/users_api` now starts the first HTTP MVP server on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter.
+`examples/hello_api` is the smallest runnable HTTP server. It listens on `127.0.0.1:8081` and responds to `GET /ping` from an Arelang function body.
+
+```sh
+curl http://127.0.0.1:8081/ping
+```
+
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter.
 
 ```sh
 curl http://127.0.0.1:8080/health

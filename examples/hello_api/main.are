@@ -1,0 +1,12 @@
+use std.http as Http
+
+struct AppState {}
+
+fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
+    return Http.Response.ok({ "message": "pong" })
+}
+
+service HelloApi(state: AppState) {
+    route GET "/ping" -> ping
+}
+

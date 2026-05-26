@@ -91,11 +91,11 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
         println!("  {} {}", route.method, route.path);
     }
 
-    run_users_api_server(&server, &routes, &functions, &root, &manifest);
+    run_http_server(&server, &routes, &functions, &root, &manifest);
     Ok(())
 }
 
-fn run_users_api_server(
+fn run_http_server(
     server: &Server,
     routes: &RuntimeRoutes,
     functions: &RuntimeFunctions,
@@ -130,7 +130,7 @@ fn handle_tiny_request(
         .read_to_string(&mut body)
         .map_err(|err| RuntimeError::Server(format!("failed to read request body: {err}")))?;
 
-    let response = users_api_response(state, routes, functions, &method, &url, &body);
+    let response = runtime_response(state, routes, functions, &method, &url, &body);
     request
         .respond(json_response(response.status, &response.body))
         .map_err(|err| RuntimeError::Server(format!("failed to write response: {err}")))
@@ -157,17 +157,11 @@ impl RuntimeRoutes {
     fn from_service(service: &ServiceDecl) -> Result<Self, RuntimeError> {
         let routes = service.routes.iter().map(runtime_route).collect::<Vec<_>>();
 
-        for required in [
-            ("GET", "/health", "health"),
-            ("POST", "/users", "create_user"),
-            ("GET", "/users/:id", "get_user"),
-        ] {
-            if !routes.iter().any(|route| route.matches(required)) {
-                return Err(RuntimeError::UnsupportedProject(format!(
-                    "HTTP MVP runtime currently requires route `{} {} -> {}`",
-                    required.0, required.1, required.2
-                )));
-            }
+        if routes.is_empty() {
+            return Err(RuntimeError::UnsupportedProject(format!(
+                "service `{}` must declare at least one route",
+                service.name
+            )));
         }
 
         Ok(Self { routes })
@@ -203,12 +197,6 @@ impl RuntimeFunctions {
 
     fn get(&self, name: &str) -> Option<&FunctionDecl> {
         self.functions.get(name)
-    }
-}
-
-impl RuntimeRoute {
-    fn matches(&self, expected: (&str, &str, &str)) -> bool {
-        self.method == expected.0 && self.path == expected.1 && self.handler == expected.2
     }
 }
 
@@ -271,7 +259,7 @@ struct RuntimeResponse {
     body: serde_json::Value,
 }
 
-fn users_api_response(
+fn runtime_response(
     state: &UsersApiState,
     routes: &RuntimeRoutes,
     functions: &RuntimeFunctions,
@@ -284,12 +272,7 @@ fn users_api_response(
         return error_response(404, "not_found");
     };
 
-    match handler {
-        "health" | "create_user" | "get_user" => {
-            interpreted_response(state, functions, handler, &params, body)
-        }
-        _ => error_response(500, "unsupported_handler"),
-    }
+    interpreted_response(state, functions, handler, &params, body)
 }
 
 fn interpreted_response(
@@ -518,7 +501,10 @@ fn match_route(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeFunctions, RuntimeRoutes, UsersApiState, match_route, users_api_response};
+    use super::{
+        RuntimeFunctions, RuntimeRoutes, UsersApiState, find_single_service, match_route,
+        runtime_response,
+    };
     use are_project::check_path;
     use std::path::Path;
     use tiny_http::Method;
@@ -541,11 +527,11 @@ mod tests {
         };
         let functions = users_api_functions();
 
-        let health = users_api_response(&state, &routes, &functions, &Method::Get, "/health", "");
+        let health = runtime_response(&state, &routes, &functions, &Method::Get, "/health", "");
         assert_eq!(health.status, 200);
         assert_eq!(health.body["status"], "ok");
 
-        let created = users_api_response(
+        let created = runtime_response(
             &state,
             &routes,
             &functions,
@@ -555,7 +541,7 @@ mod tests {
         );
         assert_eq!(created.status, 201);
 
-        let invalid = users_api_response(
+        let invalid = runtime_response(
             &state,
             &routes,
             &functions,
@@ -566,9 +552,23 @@ mod tests {
         assert_eq!(invalid.status, 400);
         assert_eq!(invalid.body["error"], "invalid_email");
 
-        let fetched = users_api_response(&state, &routes, &functions, &Method::Get, "/users/1", "");
+        let fetched = runtime_response(&state, &routes, &functions, &Method::Get, "/users/1", "");
         assert_eq!(fetched.status, 200);
         assert_eq!(fetched.body["email"], "ada@example.com");
+    }
+
+    #[test]
+    fn handles_minimal_hello_api_flow() {
+        let state = UsersApiState::default();
+        let check = check_path(Path::new("../../examples/hello_api")).expect("project checks");
+        assert!(check.ok(), "{:#?}", check.diagnostics);
+        let service = find_single_service(&check.modules).expect("single service");
+        let routes = RuntimeRoutes::from_service(service).expect("routes");
+        let functions = RuntimeFunctions::from_modules(&check.modules);
+
+        let ping = runtime_response(&state, &routes, &functions, &Method::Get, "/ping", "");
+        assert_eq!(ping.status, 200);
+        assert_eq!(ping.body["message"], "pong");
     }
 
     fn users_api_functions() -> RuntimeFunctions {

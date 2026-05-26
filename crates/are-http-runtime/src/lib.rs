@@ -64,6 +64,8 @@ pub struct TestRoute {
     pub method: String,
     pub path: String,
     pub body_type: Option<String>,
+    pub response_type: Option<String>,
+    pub status: Option<u16>,
     pub path_params: Vec<TestPathParam>,
     pub handler: String,
 }
@@ -205,10 +207,18 @@ fn print_run_summary(manifest: &Manifest, service: &str, routes: &RuntimeRoutes,
 }
 
 fn route_summary_line(route: &RuntimeRoute) -> String {
-    let contract = match &route.body_type {
+    let mut contract = match &route.body_type {
         Some(body_type) => format!("{} body {body_type}", route.path),
         None => route.path.clone(),
     };
+    if let Some(response_type) = &route.response_type {
+        contract.push_str(" returns ");
+        contract.push_str(response_type);
+    }
+    if let Some(status) = route.status {
+        contract.push_str(" status ");
+        contract.push_str(&status.to_string());
+    }
 
     format!(
         "  {:<6} {:<36} -> {}",
@@ -402,6 +412,8 @@ struct RuntimeRoute {
     method: String,
     path: String,
     body_type: Option<String>,
+    response_type: Option<String>,
+    status: Option<u16>,
     handler: String,
 }
 
@@ -456,6 +468,8 @@ impl RuntimeRoutes {
                 method: route.method.clone(),
                 path: route.path.clone(),
                 body_type: route.body_type.clone(),
+                response_type: route.response_type.clone(),
+                status: route.status,
                 path_params: route
                     .path_params()
                     .into_iter()
@@ -500,6 +514,8 @@ fn runtime_route(route: &RouteDecl) -> RuntimeRoute {
         method: route.method.clone(),
         path: route.path.clone(),
         body_type: route.body_type.as_ref().map(type_expr_name),
+        response_type: route.response_type.as_ref().map(type_expr_name),
+        status: route.status.map(|status| status.value),
         handler: route.handler.segments.join("."),
     }
 }
@@ -756,14 +772,49 @@ fn runtime_response(
         return error_response(400, "invalid_json");
     }
 
-    interpreted_response(
+    let response = interpreted_response(
         state,
         functions,
         routes.error_mapper.as_deref(),
         &route.handler,
         &params,
         body,
-    )
+    );
+    apply_route_response_contract(route, functions, response)
+}
+
+fn apply_route_response_contract(
+    route: &RuntimeRoute,
+    functions: &RuntimeFunctions,
+    response: RuntimeResponse,
+) -> RuntimeResponse {
+    if response.status >= 400 {
+        return response;
+    }
+
+    if let Some(expected_status) = route.status
+        && response.status != expected_status
+    {
+        eprintln!(
+            "Arelang response contract failed for {} {}: expected status {}, got {}",
+            route.method, route.path, expected_status, response.status
+        );
+        return error_response(500, "invalid_response_status");
+    }
+
+    if let Some(response_type) = &route.response_type
+        && !functions
+            .schemas
+            .validate_value(response_type, &response.body)
+    {
+        eprintln!(
+            "Arelang response contract failed for {} {}: response body is not {}",
+            route.method, route.path, response_type
+        );
+        return error_response(500, "invalid_response");
+    }
+
+    response
 }
 
 fn interpreted_response(
@@ -1125,11 +1176,13 @@ mod tests {
             "POST",
             "/users",
             Some("CreateUserInput"),
+            Some("User"),
+            Some(201),
             "create_user",
         ));
         assert_eq!(
             line,
-            "  POST   /users body CreateUserInput          -> create_user"
+            "  POST   /users body CreateUserInput returns User status 201 -> create_user"
         );
     }
 
@@ -1138,9 +1191,30 @@ mod tests {
         let state = UsersApiState::default();
         let routes = RuntimeRoutes {
             routes: vec![
-                route("GET", "/health", None, "health"),
-                route("POST", "/users", Some("CreateUserInput"), "create_user"),
-                route("GET", "/users/{id: UserId}", None, "get_user"),
+                route(
+                    "GET",
+                    "/health",
+                    None,
+                    Some("HealthResponse"),
+                    Some(200),
+                    "health",
+                ),
+                route(
+                    "POST",
+                    "/users",
+                    Some("CreateUserInput"),
+                    Some("User"),
+                    Some(201),
+                    "create_user",
+                ),
+                route(
+                    "GET",
+                    "/users/{id: UserId}",
+                    None,
+                    Some("User"),
+                    Some(200),
+                    "get_user",
+                ),
             ],
             error_mapper: Some("map_error".to_string()),
         };
@@ -1220,12 +1294,16 @@ mod tests {
         method: &str,
         path: &str,
         body_type: Option<&str>,
+        response_type: Option<&str>,
+        status: Option<u16>,
         handler: &str,
     ) -> super::RuntimeRoute {
         super::RuntimeRoute {
             method: method.to_string(),
             path: path.to_string(),
             body_type: body_type.map(str::to_string),
+            response_type: response_type.map(str::to_string),
+            status,
             handler: handler.to_string(),
         }
     }

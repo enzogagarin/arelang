@@ -67,7 +67,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
-- typecheck function signatures, generic arity, route handlers, route body contracts, typed path params, and HTTP error mappers
+- typecheck function signatures, generic arity, route handlers, route body contracts, route response/status contracts, typed path params, and HTTP error mappers
 - emit human or JSON diagnostics
 
 Compiler implementation hygiene:
@@ -91,13 +91,14 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
-- validate route-level body and path contracts at the host boundary
+- validate route-level body, path, response, and status contracts at the host boundary
 - start the embedded HTTP MVP runtime
 
 Current `are test` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - collect the checked service route registry
+- expose route body, response, status, typed path param, and handler data in the test report
 - execute built-in MVP runtime scenarios without opening a TCP listener
 - emit human or JSON test reports
 

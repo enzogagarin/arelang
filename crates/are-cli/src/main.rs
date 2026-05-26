@@ -320,10 +320,18 @@ fn print_test_report(report: &TestReport) {
     println!("service {}", report.service);
     println!("routes:");
     for route in &report.routes {
-        let contract = match &route.body_type {
+        let mut contract = match &route.body_type {
             Some(body_type) => format!("{} body {body_type}", route.path),
             None => route.path.clone(),
         };
+        if let Some(response_type) = &route.response_type {
+            contract.push_str(" returns ");
+            contract.push_str(response_type);
+        }
+        if let Some(status) = route.status {
+            contract.push_str(" status ");
+            contract.push_str(&status.to_string());
+        }
         println!(
             "  {:<6} {:<36} -> {}",
             route.method, contract, route.handler
@@ -416,12 +424,16 @@ fn minimal_source(service_name: &str) -> String {
 
 struct AppState {{}}
 
+struct PingResponse {{
+    message: String
+}}
+
 fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
     return Http.Response.ok({{ "message": "pong" }})
 }}
 
 service {service_name}(state: AppState) {{
-    get "/ping" -> ping
+    get "/ping" -> ping returns PingResponse status 200
 }}
 "#
     )
@@ -440,6 +452,10 @@ struct AppState {{}}
 struct CreateUserInput {{
     email: String
     name: String
+}}
+
+struct HealthResponse {{
+    status: String
 }}
 
 model User {{
@@ -487,9 +503,9 @@ fn map_error(err: ApiError) -> Http.Response {{
 service {service_name}(state: AppState) {{
     use Http.error_map(map_error)
 
-    get "/health" -> health
-    post "/users" body CreateUserInput -> create_user
-    get "/users/{{id: UserId}}" -> get_user
+    get "/health" -> health returns HealthResponse status 200
+    post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/{{id: UserId}}" -> get_user returns User status 200
 }}
 "#
     )
@@ -582,7 +598,7 @@ mod tests {
         let source = minimal_source("HelloApi");
         assert!(source.contains("fn ping"));
         assert!(source.contains("service HelloApi"));
-        assert!(source.contains(r#"get "/ping" -> ping"#));
+        assert!(source.contains(r#"get "/ping" -> ping returns PingResponse status 200"#));
     }
 
     #[test]
@@ -592,7 +608,11 @@ mod tests {
         assert!(source.contains("fn create_user"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
-        assert!(source.contains(r#"post "/users" body CreateUserInput -> create_user"#));
-        assert!(source.contains(r#"get "/users/{id: UserId}" -> get_user"#));
+        assert!(source.contains(
+            r#"post "/users" body CreateUserInput -> create_user returns User status 201"#
+        ));
+        assert!(
+            source.contains(r#"get "/users/{id: UserId}" -> get_user returns User status 200"#)
+        );
     }
 }

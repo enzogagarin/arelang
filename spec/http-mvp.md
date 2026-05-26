@@ -23,7 +23,7 @@ Current implementation status:
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations
-- canonical service syntax supports `get`, `post`, typed path params, and route body contracts
+- canonical service syntax supports `get`, `post`, typed path params, request body contracts, response contracts, and success status contracts
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
 - `are run` prints the service URL and route table before accepting requests
@@ -65,9 +65,9 @@ The context carries:
 
 ```are
 service UsersApi(state: AppState) {
-    get "/health" -> health
-    post "/users" body CreateUserInput -> create_user
-    get "/users/{id: UserId}" -> get_user
+    get "/health" -> health returns HealthResponse status 200
+    post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/{id: UserId}" -> get_user returns User status 200
 }
 ```
 
@@ -79,7 +79,11 @@ The compiler should check:
 - result-returning handlers have a compatible `Http.error_map`
 - typed route params such as `{id: UserId}` are read through matching `ctx.param<UserId>("id")`
 - body contracts such as `body CreateUserInput` are decoded through matching `req.json<CreateUserInput>()`
+- response contracts such as `returns User` name a known JSON payload type and match success response bodies where the compiler can infer them
+- status contracts such as `status 201` use valid HTTP status codes and match success response constructors such as `Http.Response.created`
 - duplicate method/path pairs are rejected
+
+At runtime, successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
 
 ## Response Helpers
 

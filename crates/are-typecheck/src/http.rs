@@ -1,4 +1,5 @@
 use super::{TypeChecker, is_identifier, path_is, path_name, same_type, type_name};
+use crate::body::{BodyType, HttpResponseUse};
 use are_ast::{
     CallArg, Expr, FunctionBody, FunctionDecl, Path, RouteDecl, ServiceDecl, Stmt, TypeExpr,
 };
@@ -12,6 +13,7 @@ impl TypeChecker<'_> {
         for route in &decl.routes {
             let path_params = self.check_route_shape(route);
             self.check_route_body_contract(route);
+            self.check_route_response_contract(route);
 
             let Some(handler) = route
                 .handler
@@ -24,6 +26,7 @@ impl TypeChecker<'_> {
             };
 
             self.check_route_io_contract(route, handler, &path_params);
+            self.check_route_handler_response_contract(route, handler);
             if let Some(error_type) = self.check_route_handler(handler, state_type) {
                 result_error_types.push(error_type);
             }
@@ -140,6 +143,35 @@ impl TypeChecker<'_> {
                     type_name(body_type)
                 ),
                 "body contracts should name a local struct or model such as `CreateUserInput`",
+            ));
+        }
+    }
+
+    fn check_route_response_contract(&mut self, route: &RouteDecl) {
+        if let Some(response_type) = &route.response_type
+            && !self.is_response_payload_type(response_type)
+        {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0420",
+                &self.file,
+                response_type.range(),
+                format!(
+                    "route response `{}` is not a response payload type",
+                    type_name(response_type)
+                ),
+                "response contracts should name a local struct, model, type alias, or primitive payload",
+            ));
+        }
+
+        if let Some(status) = route.status
+            && !(100..=599).contains(&status.value)
+        {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0421",
+                &self.file,
+                status.range,
+                format!("invalid HTTP status code `{}`", status.value),
+                "status contracts must use an integer status code from 100 to 599",
             ));
         }
     }
@@ -286,6 +318,79 @@ impl TypeChecker<'_> {
         }
     }
 
+    fn check_route_handler_response_contract(&mut self, route: &RouteDecl, handler: &FunctionDecl) {
+        if route.response_type.is_none() && route.status.is_none() {
+            return;
+        }
+
+        let Some(response_uses) = self.http_responses.get(&handler.name).cloned() else {
+            return;
+        };
+        for response_use in response_uses
+            .iter()
+            .filter(|response_use| response_use.success)
+        {
+            self.check_route_handler_response_type(route, handler, response_use);
+            self.check_route_handler_status(route, handler, response_use);
+        }
+    }
+
+    fn check_route_handler_response_type(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        response_use: &HttpResponseUse,
+    ) {
+        let Some(response_type) = &route.response_type else {
+            return;
+        };
+
+        if self.response_body_accepts(response_type, &response_use.body_type) {
+            return;
+        }
+
+        self.diagnostics.push(Diagnostic::error(
+            "E_HTTP_0422",
+            &self.file,
+            response_use.range,
+            format!(
+                "route response `{}` does not match handler `{}` response body `{}`",
+                type_name(response_type),
+                handler.name,
+                response_use.body_type.display()
+            ),
+            "the route `returns` contract should match the value passed to Http.Response.ok/created",
+        ));
+    }
+
+    fn check_route_handler_status(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        response_use: &HttpResponseUse,
+    ) {
+        let Some(expected_status) = route.status.map(|status| status.value) else {
+            return;
+        };
+        let Some(actual_status) = response_use.status else {
+            return;
+        };
+        if actual_status == expected_status {
+            return;
+        }
+
+        self.diagnostics.push(Diagnostic::error(
+            "E_HTTP_0423",
+            &self.file,
+            response_use.range,
+            format!(
+                "route declares status {expected_status} but handler `{}` returns {actual_status}",
+                handler.name
+            ),
+            "route status contracts should match the success response constructor used by the handler",
+        ));
+    }
+
     fn is_known_contract_type(&self, name: &str) -> bool {
         is_builtin_type_name(name)
             || self.types.contains_key(name)
@@ -302,6 +407,47 @@ impl TypeChecker<'_> {
         path.segments.len() == 1
             && (self.structs.contains_key(&path.segments[0])
                 || self.models.contains_key(&path.segments[0]))
+    }
+
+    fn is_response_payload_type(&self, ty: &TypeExpr) -> bool {
+        let TypeExpr::Path { path } = ty else {
+            return false;
+        };
+
+        path.segments.len() == 1 && self.is_known_response_payload_name(&path.segments[0])
+    }
+
+    fn is_known_response_payload_name(&self, name: &str) -> bool {
+        is_builtin_type_name(name)
+            || self.types.contains_key(name)
+            || self.structs.contains_key(name)
+            || self.models.contains_key(name)
+    }
+
+    fn response_body_accepts(&self, expected: &TypeExpr, actual: &BodyType) -> bool {
+        if matches!(actual, BodyType::Unknown) {
+            return true;
+        }
+
+        let expected_name = type_name(expected);
+        match actual {
+            BodyType::Named(actual_name) => actual_name == &expected_name,
+            BodyType::Object => self.structs.contains_key(&expected_name),
+            BodyType::String => expected_name == "String",
+            BodyType::Bool => expected_name == "Bool",
+            BodyType::Integer => {
+                matches!(
+                    expected_name.as_str(),
+                    "Integer" | "Int" | "I64" | "U64" | "F64"
+                )
+            }
+            BodyType::Unit
+            | BodyType::HttpRequest
+            | BodyType::HttpContext(_)
+            | BodyType::HttpResponse
+            | BodyType::Result { .. } => false,
+            BodyType::Unknown => true,
+        }
     }
 
     fn check_route_handler(

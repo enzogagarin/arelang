@@ -2,10 +2,14 @@ use std.http as Http
 
 struct AppState {}
 
+struct PingResponse {
+    message: String
+}
+
 fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
     return Http.Response.ok({ "message": "pong" })
 }
 
 service HelloApi(state: AppState) {
-    get "/ping" -> ping
+    get "/ping" -> ping returns PingResponse status 200
 }

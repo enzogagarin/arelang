@@ -194,6 +194,50 @@ fn checks_body_contract_against_handler_decode_type() {
 }
 
 #[test]
+fn checks_response_contract_against_handler_body() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct User { name: String }
+
+            fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
+                return Http.Response.ok("not_a_user")
+            }
+
+            service Api(state: AppState) {
+                get "/users/1" -> get_user returns User status 200
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0422");
+}
+
+#[test]
+fn checks_response_status_against_handler_success_status() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct User { name: String }
+
+            fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
+                return Http.Response.ok({ "name": "Ada" })
+            }
+
+            service Api(state: AppState) {
+                post "/users" -> create_user returns User status 201
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0423");
+}
+
+#[test]
 fn rejects_invalid_result_arity() {
     let source = r#"
             use std.http as Http

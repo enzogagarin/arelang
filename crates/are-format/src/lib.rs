@@ -278,6 +278,14 @@ fn format_service(output: &mut String, decl: &ServiceDecl) {
         }
         output.push_str(" -> ");
         output.push_str(&format_path(&route.handler));
+        if let Some(response_type) = &route.response_type {
+            output.push_str(" returns ");
+            output.push_str(&format_type_expr(response_type));
+        }
+        if let Some(status) = route.status {
+            output.push_str(" status ");
+            output.push_str(&status.value.to_string());
+        }
         output.push('\n');
     }
 
@@ -559,7 +567,7 @@ mod tests {
         let source = r#"use   std.http   as   Http
 struct AppState{}
 fn ping(ctx:Http.Context<AppState>,req:Http.Request)->Http.Response{return Http.Response.ok({"message":"pong"})}
-service HelloApi(state:AppState){route GET "/ping"->ping}
+service HelloApi(state:AppState){route GET "/ping"->ping returns PingResponse status 200}
 "#;
 
         let formatted = format_source(Path::new("test.are"), source).expect("formats");
@@ -574,7 +582,7 @@ fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
 }
 
 service HelloApi(state: AppState) {
-    get "/ping" -> ping
+    get "/ping" -> ping returns PingResponse status 200
 }
 "#
         );
@@ -585,15 +593,20 @@ service HelloApi(state: AppState) {
         let source = r#"use std.http as Http
 struct AppState{}
 struct CreateUserInput{name:String}
+model User{id:U64 primary name:String}
 fn create_user(ctx:Http.Context<AppState>,req:Http.Request)->Http.Response{return Http.Response.ok({})}
 fn get_user(ctx:Http.Context<AppState>,req:Http.Request)->Http.Response{return Http.Response.ok({})}
-service UsersApi(state:AppState){route POST "/users" body CreateUserInput -> create_user
-route GET "/users/{id: UserId}" -> get_user}
+service UsersApi(state:AppState){route POST "/users" body CreateUserInput -> create_user returns User status 201
+route GET "/users/{id: UserId}" -> get_user returns User status 200}
 "#;
 
         let formatted = format_source(Path::new("test.are"), source).expect("formats");
-        assert!(formatted.contains(r#"post "/users" body CreateUserInput -> create_user"#));
-        assert!(formatted.contains(r#"get "/users/{id: UserId}" -> get_user"#));
+        assert!(formatted.contains(
+            r#"post "/users" body CreateUserInput -> create_user returns User status 201"#
+        ));
+        assert!(
+            formatted.contains(r#"get "/users/{id: UserId}" -> get_user returns User status 200"#)
+        );
     }
 
     #[test]

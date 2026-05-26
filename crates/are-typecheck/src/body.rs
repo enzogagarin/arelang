@@ -34,10 +34,13 @@ impl TypeChecker<'_> {
                 .collect(),
             return_type,
             result_error,
+            http_responses: Vec::new(),
             diagnostics: Vec::new(),
         };
 
         body.check_statements(&block.statements, &decl.name);
+        self.http_responses
+            .insert(decl.name.clone(), body.http_responses.clone());
         self.diagnostics.extend(body.diagnostics);
     }
 
@@ -49,6 +52,9 @@ impl TypeChecker<'_> {
                     for route in &decl.routes {
                         if let Some(body_type) = &route.body_type {
                             self.check_type_expr_arity(body_type);
+                        }
+                        if let Some(response_type) = &route.response_type {
+                            self.check_type_expr_arity(response_type);
                         }
                     }
                 }
@@ -124,7 +130,15 @@ impl TypeChecker<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum BodyType {
+pub(super) struct HttpResponseUse {
+    pub status: Option<u16>,
+    pub success: bool,
+    pub body_type: BodyType,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum BodyType {
     Unit,
     Bool,
     String,
@@ -156,7 +170,7 @@ impl BodyType {
         }
     }
 
-    fn display(&self) -> String {
+    pub(super) fn display(&self) -> String {
         match self {
             Self::Unit => "Unit".to_string(),
             Self::Bool => "Bool".to_string(),
@@ -186,6 +200,7 @@ struct BodyChecker<'a> {
     env: HashMap<String, BodyType>,
     return_type: Option<BodyType>,
     result_error: Option<BodyType>,
+    http_responses: Vec<HttpResponseUse>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -542,7 +557,17 @@ impl BodyChecker<'_> {
         match builtin {
             Builtin::HttpResponseOk | Builtin::HttpResponseCreated => {
                 self.expect_positional_arity(callee_name, args, 1, range);
-                self.check_positional_arg(args, 0);
+                let body_type = self.check_positional_arg(args, 0);
+                self.http_responses.push(HttpResponseUse {
+                    status: Some(match builtin {
+                        Builtin::HttpResponseOk => 200,
+                        Builtin::HttpResponseCreated => 201,
+                        _ => unreachable!("covered by outer match arm"),
+                    }),
+                    success: true,
+                    body_type,
+                    range,
+                });
                 BodyType::HttpResponse
             }
             Builtin::HttpResponseError => {
@@ -553,7 +578,14 @@ impl BodyChecker<'_> {
                     range,
                     "Http.Response.error expects an integer HTTP status",
                 );
-                self.check_positional_arg(args, 1);
+                let body_type = self.check_positional_arg(args, 1);
+                self.http_responses.push(HttpResponseUse {
+                    status: integer_literal_arg(args, 0)
+                        .and_then(|status| u16::try_from(status).ok()),
+                    success: false,
+                    body_type,
+                    range,
+                });
                 BodyType::HttpResponse
             }
             Builtin::RequestJson => {
@@ -1180,6 +1212,14 @@ fn body_type_from_type_expr(ty: &TypeExpr, http_aliases: &HashSet<String>) -> Bo
             body_type_from_type_expr(inner, http_aliases).display()
         )),
     }
+}
+
+fn integer_literal_arg(args: &[CallArg], index: usize) -> Option<i64> {
+    let arg = args.iter().filter(|arg| arg.label.is_none()).nth(index)?;
+    let Expr::Integer { value, .. } = &arg.value else {
+        return None;
+    };
+    Some(*value)
 }
 
 fn same_body_type(left: &BodyType, right: &BodyType) -> bool {

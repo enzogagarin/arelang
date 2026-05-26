@@ -164,6 +164,9 @@ impl<'a> Resolver<'a> {
             if let Some(body_type) = &route.body_type {
                 self.resolve_type_expr(body_type);
             }
+            if let Some(response_type) = &route.response_type {
+                self.resolve_type_expr(response_type);
+            }
 
             let key = (route.method.as_str(), route.path.as_str());
             if !routes.insert(key) {

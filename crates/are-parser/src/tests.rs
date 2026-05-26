@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 14);
+    assert_eq!(module.items.len(), 15);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -90,8 +90,8 @@ fn parses_service_routes() {
     let source = r#"
             service UsersApi(state: AppState) {
                 use Http.error_map(map_error)
-                route GET "/health" -> health
-                route POST "/users" -> create_user
+                route GET "/health" -> health returns HealthResponse status 200
+                route POST "/users" -> create_user returns User status 201
             }
         "#;
     let file = Path::new("test.are");
@@ -112,14 +112,16 @@ fn parses_service_routes() {
     assert_eq!(service.uses[0].args[0].segments, ["map_error"]);
     assert_eq!(service.routes[0].method, "GET");
     assert_eq!(service.routes[0].path, "/health");
+    assert!(service.routes[0].response_type.is_some());
+    assert_eq!(service.routes[0].status.expect("status").value, 200);
 }
 
 #[test]
 fn parses_method_shorthand_route_contracts() {
     let source = r#"
             service UsersApi(state: AppState) {
-                post "/users" body CreateUserInput -> create_user
-                get "/users/{id: UserId}" -> get_user
+                post "/users" body CreateUserInput -> create_user returns User status 201
+                get "/users/{id: UserId}" -> get_user returns User status 200
             }
         "#;
     let file = Path::new("test.are");
@@ -137,7 +139,10 @@ fn parses_method_shorthand_route_contracts() {
     assert_eq!(service.routes[0].method, "POST");
     assert_eq!(service.routes[0].path, "/users");
     assert!(service.routes[0].body_type.is_some());
+    assert!(service.routes[0].response_type.is_some());
+    assert_eq!(service.routes[0].status.expect("status").value, 201);
     assert_eq!(service.routes[1].method, "GET");
     assert_eq!(service.routes[1].path, "/users/{id: UserId}");
     assert!(service.routes[1].body_type.is_none());
+    assert_eq!(service.routes[1].status.expect("status").value, 200);
 }

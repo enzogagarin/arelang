@@ -94,7 +94,7 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 
 `are fmt` rewrites `.are` files into the canonical Arelang style. `--check` verifies formatting without writing, which is what CI uses. The first formatter intentionally refuses to rewrite files with comments until comment-preserving formatting is implemented.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, route response/status contracts, and `?` usage.
 
 `are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
 
@@ -123,13 +123,13 @@ curl http://127.0.0.1:8081/ping
 service UsersApi(state: AppState) {
     use Http.error_map(map_error)
 
-    get "/health" -> health
-    post "/users" body CreateUserInput -> create_user
-    get "/users/{id: UserId}" -> get_user
+    get "/health" -> health returns HealthResponse status 200
+    post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/{id: UserId}" -> get_user returns User status 200
 }
 ```
 
-The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
+The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `returns User status 201` matches the success response shape where the compiler can infer it, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then validates successful response JSON and success status before sending the response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health

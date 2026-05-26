@@ -287,6 +287,14 @@ pub struct RouteDecl {
     pub path: String,
     pub body_type: Option<TypeExpr>,
     pub handler: Path,
+    pub response_type: Option<TypeExpr>,
+    pub status: Option<RouteStatus>,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RouteStatus {
+    pub value: u16,
     pub range: SourceRange,
 }
 

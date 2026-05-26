@@ -26,6 +26,7 @@ struct TypeChecker<'a> {
     models: HashMap<String, &'a ModelDecl>,
     enums: HashMap<String, &'a EnumDecl>,
     types: HashMap<String, &'a TypeDecl>,
+    http_responses: HashMap<String, Vec<body::HttpResponseUse>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -47,6 +48,7 @@ impl<'a> TypeChecker<'a> {
             models,
             enums,
             types,
+            http_responses: HashMap::new(),
             diagnostics: Vec::new(),
         }
     }
@@ -59,12 +61,17 @@ impl<'a> TypeChecker<'a> {
     fn check_items(&mut self) {
         for item in &self.module.items {
             match item {
-                Item::Use(_) | Item::Type(_) => {}
+                Item::Use(_) | Item::Type(_) | Item::Service(_) => {}
                 Item::Struct(decl) => self.check_struct(decl),
                 Item::Model(decl) => self.check_model(decl),
                 Item::Enum(decl) => self.check_enum(decl),
                 Item::Function(decl) => self.check_function(decl),
-                Item::Service(decl) => self.check_service(decl),
+            }
+        }
+
+        for item in &self.module.items {
+            if let Item::Service(decl) = item {
+                self.check_service(decl);
             }
         }
 

@@ -1,7 +1,7 @@
 use are_ast::{
     Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item,
     ModelDecl, ModelField, ModelFieldAttr, Module, ObjectField, Param, Path, Pattern, RawBlock,
-    RouteDecl, ServiceDecl, ServiceUse, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
+    RouteDecl, RouteStatus, ServiceDecl, ServiceUse, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, Position, SourceRange};
 use are_lexer::{Keyword, Token, TokenKind};
@@ -380,13 +380,33 @@ impl<'a> Parser<'a> {
         };
         self.expect_kind(&TokenKind::Arrow, "expected `->` before route handler")?;
         let handler = self.parse_path()?;
-        let end = handler.range.end;
+        let mut end = handler.range.end;
+        let response_type = if self.match_identifier("returns").is_some() {
+            let response_type = self.parse_type_expr()?;
+            end = response_type.range().end;
+            Some(response_type)
+        } else {
+            None
+        };
+        let status = if let Some(range) = self.match_identifier("status") {
+            let status_token =
+                self.expect_kind(&TokenKind::Integer, "expected integer HTTP status code")?;
+            end = status_token.range.end;
+            Some(RouteStatus {
+                value: status_token.lexeme.parse().unwrap_or(0),
+                range: SourceRange::new(range.start, status_token.range.end),
+            })
+        } else {
+            None
+        };
 
         Some(RouteDecl {
             method: method.to_ascii_uppercase(),
             path: unquote(&path_token.lexeme),
             body_type,
             handler,
+            response_type,
+            status,
             range: SourceRange::new(start, end),
         })
     }

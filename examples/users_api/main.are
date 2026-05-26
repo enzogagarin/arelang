@@ -11,6 +11,10 @@ struct CreateUserInput {
     name: String
 }
 
+struct HealthResponse {
+    status: String
+}
+
 model User {
     id: UserId primary
     email: Email unique
@@ -56,7 +60,7 @@ fn map_error(err: ApiError) -> Http.Response {
 service UsersApi(state: AppState) {
     use Http.error_map(map_error)
 
-    get "/health" -> health
-    post "/users" body CreateUserInput -> create_user
-    get "/users/{id: UserId}" -> get_user
+    get "/health" -> health returns HealthResponse status 200
+    post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/{id: UserId}" -> get_user returns User status 200
 }

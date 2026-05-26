@@ -66,6 +66,7 @@ Output:
 - HTTP error mapper checks: done
 - `?` propagation checks: done
 - route body contract checks: done
+- route response and success status contract checks: done
 - typed path parameter contract checks: done
 - function body checker module split: done
 
@@ -100,6 +101,7 @@ Output:
 - JSON decode/encode MVP: done for local structs/models with primitive fields
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
+- route response contracts: done for `returns Payload status N`
 - API error mapping: done through `Http.error_map`
 
 Definition of done:
@@ -109,6 +111,7 @@ Definition of done:
 - `POST /users` creates an in-memory user: done
 - `GET /users/{id: UserId}` returns that user or a typed error: done
 - canonical route contracts with method shorthand, typed path params, and request body declarations: done
+- successful HTTP responses are validated against declared `returns` and `status` contracts: done
 - function body interpreter replaces the temporary users API adapter
 
 ## Milestone 5: Backend Quality Loop

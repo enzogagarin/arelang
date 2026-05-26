@@ -44,6 +44,9 @@ are build --release
 From the repository root, the current demos are intentionally a small set of commands:
 
 ```sh
+./are new scratch_api --port 8090
+./are check scratch_api
+./are run scratch_api
 ./are check examples/hello_api
 ./are run examples/hello_api
 ./are check examples/users_api
@@ -64,6 +67,8 @@ After that, the commands become:
 are check examples/hello_api
 are run examples/hello_api
 ```
+
+`are new` creates a minimal HTTP server project with an `are.toml` manifest and a `main.are` file. The generated project starts with a single `GET /ping` route.
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `?`, generic calls, object literals, field paths, and named arguments.
 

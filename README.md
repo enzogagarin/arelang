@@ -44,12 +44,25 @@ are build --release
 From the repository root, the current demos are intentionally a small set of commands:
 
 ```sh
-cargo run -p are-cli -- check examples/hello_api
-cargo run -p are-cli -- run examples/hello_api
-cargo run -p are-cli -- check examples/users_api
-cargo run -p are-cli -- check examples/users_api --json
-cargo run -p are-cli -- run examples/users_api
+./are check examples/hello_api
+./are run examples/hello_api
+./are check examples/users_api
+./are check examples/users_api --json
+./are run examples/users_api
 cargo test
+```
+
+To install the local CLI as `are`, run:
+
+```sh
+cargo install --path crates/are-cli
+```
+
+After that, the commands become:
+
+```sh
+are check examples/hello_api
+are run examples/hello_api
 ```
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `?`, generic calls, object literals, field paths, and named arguments.

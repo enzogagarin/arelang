@@ -1,5 +1,7 @@
 # Arelang
 
+[![MVP Smoke](https://github.com/enzogagarin/arelang/actions/workflows/mvp-smoke.yml/badge.svg)](https://github.com/enzogagarin/arelang/actions/workflows/mvp-smoke.yml)
+
 Arelang is a small backend-first programming language for AI-assisted service generation.
 
 The first product goal is not a complete general-purpose language. The first goal is a working HTTP server version that can run a small `users_api` service with typed request/response models, clear errors, and a deterministic compiler feedback loop.

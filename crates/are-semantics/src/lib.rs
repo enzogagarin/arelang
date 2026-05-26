@@ -9,6 +9,8 @@ pub enum Builtin {
     ContextParam,
     StateUsersInsert,
     StateUsersGet,
+    DbUsersInsert,
+    DbUsersGet,
 }
 
 impl Builtin {
@@ -24,6 +26,8 @@ impl Builtin {
             Self::ContextParam => "ctx.param",
             Self::StateUsersInsert => "ctx.state.users.insert",
             Self::StateUsersGet => "ctx.state.users.get",
+            Self::DbUsersInsert => "ctx.db.users.insert",
+            Self::DbUsersGet => "ctx.db.users.get",
         }
     }
 }
@@ -40,6 +44,8 @@ pub fn builtin_by_callee(callee: &str) -> Option<Builtin> {
         "ctx.param" => Some(Builtin::ContextParam),
         "ctx.state.users.insert" => Some(Builtin::StateUsersInsert),
         "ctx.state.users.get" => Some(Builtin::StateUsersGet),
+        "ctx.db.users.insert" => Some(Builtin::DbUsersInsert),
+        "ctx.db.users.get" => Some(Builtin::DbUsersGet),
         _ => None,
     }
 }
@@ -60,6 +66,8 @@ mod tests {
             Builtin::ContextParam,
             Builtin::StateUsersInsert,
             Builtin::StateUsersGet,
+            Builtin::DbUsersInsert,
+            Builtin::DbUsersGet,
         ] {
             assert_eq!(builtin_by_callee(builtin.callee()), Some(builtin));
         }

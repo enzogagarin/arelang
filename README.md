@@ -70,7 +70,7 @@ are run examples/hello_api
 
 `are new` creates a minimal HTTP server project with an `are.toml` manifest and a `main.are` file. The generated project starts with a single `GET /ping` route.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, state access, return types, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
 
 `examples/hello_api` is the smallest runnable HTTP server. It listens on `127.0.0.1:8081` and responds to `GET /ping` from an Arelang function body.
 
@@ -78,7 +78,7 @@ are run examples/hello_api
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, and `Http.error_map(map_error)` maps those errors to HTTP responses with an Arelang `match`.
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health

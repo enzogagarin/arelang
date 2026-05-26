@@ -1,6 +1,7 @@
 use are_ast::{
-    CallArg, EnumDecl, Expr, Field, FunctionBody, FunctionDecl, Item, Module, Param, Path, Pattern,
-    RouteDecl, ServiceDecl, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
+    CallArg, EnumDecl, Expr, Field, FunctionBody, FunctionDecl, Item, ModelDecl, ModelField,
+    ModelFieldAttr, Module, Param, Path, Pattern, RouteDecl, ServiceDecl, Stmt, StructDecl,
+    TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, SourceRange};
 use are_semantics::{Builtin, builtin_by_callee};
@@ -18,6 +19,7 @@ struct TypeChecker<'a> {
     http_aliases: HashSet<String>,
     functions: HashMap<String, &'a FunctionDecl>,
     structs: HashMap<String, &'a StructDecl>,
+    models: HashMap<String, &'a ModelDecl>,
     enums: HashMap<String, &'a EnumDecl>,
     types: HashMap<String, &'a TypeDecl>,
     diagnostics: Vec<Diagnostic>,
@@ -28,6 +30,7 @@ impl<'a> TypeChecker<'a> {
         let http_aliases = collect_http_aliases(module);
         let functions = collect_functions(module);
         let structs = collect_structs(module);
+        let models = collect_models(module);
         let enums = collect_enums(module);
         let types = collect_types(module);
 
@@ -37,6 +40,7 @@ impl<'a> TypeChecker<'a> {
             http_aliases,
             functions,
             structs,
+            models,
             enums,
             types,
             diagnostics: Vec::new(),
@@ -53,6 +57,7 @@ impl<'a> TypeChecker<'a> {
             match item {
                 Item::Use(_) | Item::Type(_) => {}
                 Item::Struct(decl) => self.check_struct(decl),
+                Item::Model(decl) => self.check_model(decl),
                 Item::Enum(decl) => self.check_enum(decl),
                 Item::Function(decl) => self.check_function(decl),
                 Item::Service(decl) => self.check_service(decl),
@@ -64,6 +69,11 @@ impl<'a> TypeChecker<'a> {
 
     fn check_struct(&mut self, decl: &StructDecl) {
         self.check_duplicate_fields(&decl.fields, DuplicateScope::StructField);
+    }
+
+    fn check_model(&mut self, decl: &ModelDecl) {
+        self.check_duplicate_model_fields(&decl.fields);
+        self.check_model_attrs(decl);
     }
 
     fn check_enum(&mut self, decl: &EnumDecl) {
@@ -103,6 +113,7 @@ impl<'a> TypeChecker<'a> {
             http_aliases: &self.http_aliases,
             functions: &self.functions,
             structs: &self.structs,
+            models: &self.models,
             enums: &self.enums,
             types: &self.types,
             env: decl
@@ -455,6 +466,53 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn check_duplicate_model_fields(&mut self, fields: &[ModelField]) {
+        let mut names = HashMap::new();
+
+        for field in fields {
+            if let Some(previous) = names.insert(field.name.as_str(), field.range) {
+                self.duplicate(
+                    "E_TYPE_0007",
+                    field.range,
+                    format!("duplicate model field `{}`", field.name),
+                    previous,
+                );
+            }
+        }
+    }
+
+    fn check_model_attrs(&mut self, decl: &ModelDecl) {
+        let mut primary = None;
+
+        for field in &decl.fields {
+            let mut attrs = HashMap::new();
+            for attr in &field.attrs {
+                if let Some(previous) = attrs.insert(*attr, field.range) {
+                    self.duplicate(
+                        "E_TYPE_0008",
+                        field.range,
+                        format!(
+                            "duplicate model field attribute `{}`",
+                            model_attr_name(*attr)
+                        ),
+                        previous,
+                    );
+                }
+
+                if *attr == ModelFieldAttr::Primary
+                    && let Some(previous) = primary.replace(field.range)
+                {
+                    self.duplicate(
+                        "E_TYPE_0009",
+                        field.range,
+                        format!("model `{}` has multiple primary fields", decl.name),
+                        previous,
+                    );
+                }
+            }
+        }
+    }
+
     fn check_duplicate_params(&mut self, params: &[Param]) {
         let mut names = HashMap::new();
 
@@ -476,6 +534,11 @@ impl<'a> TypeChecker<'a> {
                 Item::Use(_) | Item::Service(_) => {}
                 Item::Type(decl) => self.check_type_expr_arity(&decl.aliased),
                 Item::Struct(decl) => {
+                    for field in &decl.fields {
+                        self.check_type_expr_arity(&field.ty);
+                    }
+                }
+                Item::Model(decl) => {
                     for field in &decl.fields {
                         self.check_type_expr_arity(&field.ty);
                     }
@@ -663,6 +726,7 @@ struct BodyChecker<'a> {
     http_aliases: &'a HashSet<String>,
     functions: &'a HashMap<String, &'a FunctionDecl>,
     structs: &'a HashMap<String, &'a StructDecl>,
+    models: &'a HashMap<String, &'a ModelDecl>,
     enums: &'a HashMap<String, &'a EnumDecl>,
     types: &'a HashMap<String, &'a TypeDecl>,
     env: HashMap<String, BodyType>,
@@ -893,36 +957,54 @@ impl BodyChecker<'_> {
                 "E_BODY_0002",
                 range,
                 format!("`{}` has no field `{field_name}`", owner.display()),
-                "field access is currently supported on local struct values",
+                "field access is currently supported on local struct and model values",
             );
             return BodyType::Unknown;
         };
 
-        let Some(struct_decl) = self.structs.get(type_name) else {
-            self.error(
-                "E_BODY_0002",
-                range,
-                format!("unknown struct `{type_name}` in field access"),
-                "only local struct fields can be selected in the current body checker",
-            );
-            return BodyType::Unknown;
-        };
+        if let Some(struct_decl) = self.structs.get(type_name) {
+            let Some(field) = struct_decl
+                .fields
+                .iter()
+                .find(|field| field.name == field_name)
+            else {
+                self.error(
+                    "E_BODY_0002",
+                    range,
+                    format!("struct `{type_name}` has no field `{field_name}`"),
+                    "check the field name or update the struct declaration",
+                );
+                return BodyType::Unknown;
+            };
 
-        let Some(field) = struct_decl
-            .fields
-            .iter()
-            .find(|field| field.name == field_name)
-        else {
-            self.error(
-                "E_BODY_0002",
-                range,
-                format!("struct `{type_name}` has no field `{field_name}`"),
-                "check the field name or update the struct declaration",
-            );
-            return BodyType::Unknown;
-        };
+            return body_type_from_type_expr(&field.ty, self.http_aliases);
+        }
 
-        body_type_from_type_expr(&field.ty, self.http_aliases)
+        if let Some(model_decl) = self.models.get(type_name) {
+            let Some(field) = model_decl
+                .fields
+                .iter()
+                .find(|field| field.name == field_name)
+            else {
+                self.error(
+                    "E_BODY_0002",
+                    range,
+                    format!("model `{type_name}` has no field `{field_name}`"),
+                    "check the field name or update the model declaration",
+                );
+                return BodyType::Unknown;
+            };
+
+            return body_type_from_type_expr(&field.ty, self.http_aliases);
+        }
+
+        self.error(
+            "E_BODY_0002",
+            range,
+            format!("unknown data type `{type_name}` in field access"),
+            "only local struct and model fields can be selected in the current body checker",
+        );
+        BodyType::Unknown
     }
 
     fn check_call(
@@ -1030,7 +1112,10 @@ impl BodyChecker<'_> {
                 let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)
             }
-            Builtin::StateUsersInsert | Builtin::StateUsersGet => {
+            Builtin::StateUsersInsert
+            | Builtin::StateUsersGet
+            | Builtin::DbUsersInsert
+            | Builtin::DbUsersGet => {
                 self.expect_positional_arity(callee_name, args, 1, range);
                 self.check_positional_arg(args, 0);
                 self.result_type(self.named_or_unknown("User"))
@@ -1504,7 +1589,10 @@ impl BodyChecker<'_> {
     }
 
     fn named_or_unknown(&self, name: &str) -> BodyType {
-        if self.structs.contains_key(name) || self.types.contains_key(name) {
+        if self.structs.contains_key(name)
+            || self.models.contains_key(name)
+            || self.types.contains_key(name)
+        {
             BodyType::Named(name.to_string())
         } else {
             BodyType::Unknown
@@ -1527,6 +1615,13 @@ impl BodyChecker<'_> {
 enum DuplicateScope {
     StructField,
     EnumPayload,
+}
+
+fn model_attr_name(attr: ModelFieldAttr) -> &'static str {
+    match attr {
+        ModelFieldAttr::Primary => "primary",
+        ModelFieldAttr::Unique => "unique",
+    }
 }
 
 fn collect_http_aliases(module: &Module) -> HashSet<String> {
@@ -1566,6 +1661,19 @@ fn collect_structs(module: &Module) -> HashMap<String, &StructDecl> {
         .iter()
         .filter_map(|item| {
             let Item::Struct(decl) = item else {
+                return None;
+            };
+            Some((decl.name.clone(), decl))
+        })
+        .collect()
+}
+
+fn collect_models(module: &Module) -> HashMap<String, &ModelDecl> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Model(decl) = item else {
                 return None;
             };
             Some((decl.name.clone(), decl))

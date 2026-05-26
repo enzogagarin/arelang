@@ -477,7 +477,7 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                 let max = self.named_i64_arg(&callee_name, args, "max")?;
                 self.host.validate_length(&value, min, max).map(Value::Bool)
             }
-            Some(Builtin::StateUsersInsert) => {
+            Some(Builtin::StateUsersInsert | Builtin::DbUsersInsert) => {
                 let input = self.single_json_arg(&callee_name, args)?;
                 self.host.insert_user(input).map(Value::Json)
             }
@@ -488,7 +488,7 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                     .read_path_param(type_name.as_deref(), &name)
                     .map(Value::Json)
             }
-            Some(Builtin::StateUsersGet) => {
+            Some(Builtin::StateUsersGet | Builtin::DbUsersGet) => {
                 let id = self.single_json_arg(&callee_name, args)?;
                 self.host.get_user(id).map(Value::Json)
             }
@@ -720,7 +720,7 @@ impl Host for NoopHost {
 
     fn insert_user(&mut self, _input: JsonValue) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression(
-            "ctx.state.users.insert".into(),
+            "ctx.db.users.insert".into(),
         ))
     }
 
@@ -734,7 +734,7 @@ impl Host for NoopHost {
 
     fn get_user(&mut self, _id: JsonValue) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression(
-            "ctx.state.users.get".into(),
+            "ctx.db.users.get".into(),
         ))
     }
 }

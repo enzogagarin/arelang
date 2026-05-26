@@ -4,20 +4,16 @@ use std.validate
 type UserId = opaque U64
 type Email = opaque String
 
-struct AppState {
-    users: UserStore
-}
-
-struct UserStore {}
+struct AppState {}
 
 struct CreateUserInput {
     email: String
     name: String
 }
 
-struct User {
-    id: UserId
-    email: Email
+model User {
+    id: UserId primary
+    email: Email unique
     name: String
 }
 
@@ -39,13 +35,13 @@ fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {
 
 fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
     let input = validate_user(req.json<CreateUserInput>()?)?
-    let user = ctx.state.users.insert(input)?
+    let user = ctx.db.users.insert(input)?
     return Http.Response.created(user)
 }
 
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
     let id = ctx.param<UserId>("id")?
-    let user = ctx.state.users.get(id)?
+    let user = ctx.db.users.get(id)?
     return Http.Response.ok(user)
 }
 

@@ -1,6 +1,6 @@
 use are_ast::{
-    EnumDecl, FunctionDecl, Item, Module, Path, ServiceDecl, StructDecl, TypeDecl, TypeExpr,
-    UseDecl,
+    EnumDecl, FunctionDecl, Item, ModelDecl, Module, Path, ServiceDecl, StructDecl, TypeDecl,
+    TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, SourceRange};
 use std::collections::{HashMap, HashSet};
@@ -11,6 +11,7 @@ enum SymbolKind {
     Import,
     Type,
     Struct,
+    Model,
     Enum,
     Function,
     Service,
@@ -56,6 +57,7 @@ impl<'a> Resolver<'a> {
                 Item::Use(decl) => self.declare_use(decl),
                 Item::Type(decl) => self.declare(&decl.name, SymbolKind::Type, decl.range),
                 Item::Struct(decl) => self.declare(&decl.name, SymbolKind::Struct, decl.range),
+                Item::Model(decl) => self.declare(&decl.name, SymbolKind::Model, decl.range),
                 Item::Enum(decl) => self.declare(&decl.name, SymbolKind::Enum, decl.range),
                 Item::Function(decl) => {
                     self.declare(&decl.name, SymbolKind::Function, decl.range);
@@ -71,6 +73,7 @@ impl<'a> Resolver<'a> {
                 Item::Use(_) => {}
                 Item::Type(decl) => self.resolve_type_decl(decl),
                 Item::Struct(decl) => self.resolve_struct(decl),
+                Item::Model(decl) => self.resolve_model(decl),
                 Item::Enum(decl) => self.resolve_enum(decl),
                 Item::Function(decl) => self.resolve_function(decl),
                 Item::Service(decl) => self.resolve_service(decl),
@@ -118,6 +121,12 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_struct(&mut self, decl: &StructDecl) {
+        for field in &decl.fields {
+            self.resolve_type_expr(&field.ty);
+        }
+    }
+
+    fn resolve_model(&mut self, decl: &ModelDecl) {
         for field in &decl.fields {
             self.resolve_type_expr(&field.ty);
         }
@@ -288,7 +297,7 @@ impl<'a> Resolver<'a> {
         self.symbols.get(name).is_some_and(|symbol| {
             matches!(
                 symbol.kind,
-                SymbolKind::Type | SymbolKind::Struct | SymbolKind::Enum
+                SymbolKind::Type | SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Model
             )
         })
     }

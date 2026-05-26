@@ -12,6 +12,7 @@ pub enum Item {
     Use(UseDecl),
     Type(TypeDecl),
     Struct(StructDecl),
+    Model(ModelDecl),
     Enum(EnumDecl),
     Function(FunctionDecl),
     Service(ServiceDecl),
@@ -44,6 +45,28 @@ pub struct Field {
     pub name: String,
     pub ty: TypeExpr,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelDecl {
+    pub name: String,
+    pub fields: Vec<ModelField>,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelField {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub attrs: Vec<ModelFieldAttr>,
+    pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelFieldAttr {
+    Primary,
+    Unique,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

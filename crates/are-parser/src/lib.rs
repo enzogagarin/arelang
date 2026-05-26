@@ -1,7 +1,7 @@
 use are_ast::{
-    Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item, Module,
-    ObjectField, Param, Path, Pattern, RawBlock, RouteDecl, ServiceDecl, ServiceUse, Stmt,
-    StructDecl, TypeDecl, TypeExpr, UseDecl,
+    Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item,
+    ModelDecl, ModelField, ModelFieldAttr, Module, ObjectField, Param, Path, Pattern, RawBlock,
+    RouteDecl, ServiceDecl, ServiceUse, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, Position, SourceRange};
 use are_lexer::{Keyword, Token, TokenKind};
@@ -61,6 +61,10 @@ impl<'a> Parser<'a> {
             return self.parse_struct().map(Item::Struct);
         }
 
+        if self.match_keyword(Keyword::Model).is_some() {
+            return self.parse_model().map(Item::Model);
+        }
+
         if self.match_keyword(Keyword::Enum).is_some() {
             return self.parse_enum().map(Item::Enum);
         }
@@ -78,7 +82,7 @@ impl<'a> Parser<'a> {
             "E_PARSE_0001",
             "expected top-level item",
             format!(
-                "expected `use`, `type`, `struct`, `enum`, `fn`, or `service`, found `{}`",
+                "expected `use`, `type`, `struct`, `model`, `enum`, `fn`, or `service`, found `{}`",
                 token.lexeme
             ),
         );
@@ -138,6 +142,62 @@ impl<'a> Parser<'a> {
             fields,
             range: SourceRange::new(start, end),
         })
+    }
+
+    fn parse_model(&mut self) -> Option<ModelDecl> {
+        let start = self.previous_range()?.start;
+        let name = self.expect_identifier("expected model name")?;
+        self.expect_kind(&TokenKind::LeftBrace, "expected `{` after model name")?;
+
+        let mut fields = Vec::new();
+        while !self.at_eof() && !self.check_kind(&TokenKind::RightBrace) {
+            fields.push(self.parse_model_field()?);
+        }
+
+        let end = self
+            .expect_kind(&TokenKind::RightBrace, "expected `}` after model fields")?
+            .range
+            .end;
+
+        Some(ModelDecl {
+            name,
+            fields,
+            range: SourceRange::new(start, end),
+        })
+    }
+
+    fn parse_model_field(&mut self) -> Option<ModelField> {
+        let start = self.peek().range.start;
+        let name = self.expect_identifier("expected model field name")?;
+        self.expect_kind(&TokenKind::Colon, "expected `:` after model field name")?;
+        let ty = self.parse_type_expr()?;
+        let mut attrs = Vec::new();
+
+        while let Some(attr) = self.match_model_field_attr() {
+            attrs.push(attr);
+        }
+
+        let end = self.previous_range()?.end;
+        Some(ModelField {
+            name,
+            ty,
+            attrs,
+            range: SourceRange::new(start, end),
+        })
+    }
+
+    fn match_model_field_attr(&mut self) -> Option<ModelFieldAttr> {
+        if self.peek().kind != TokenKind::Identifier {
+            return None;
+        }
+
+        let attr = match self.peek().lexeme.as_str() {
+            "primary" => ModelFieldAttr::Primary,
+            "unique" => ModelFieldAttr::Unique,
+            _ => return None,
+        };
+        self.advance();
+        Some(attr)
     }
 
     fn parse_enum(&mut self) -> Option<EnumDecl> {
@@ -889,6 +949,7 @@ impl<'a> Parser<'a> {
                     Keyword::Use
                         | Keyword::Type
                         | Keyword::Struct
+                        | Keyword::Model
                         | Keyword::Enum
                         | Keyword::Fn
                         | Keyword::Service
@@ -953,7 +1014,7 @@ fn unquote(lexeme: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::parse_tokens;
-    use are_ast::{Expr, FunctionBody, Item, Stmt};
+    use are_ast::{Expr, FunctionBody, FunctionDecl, Item, Module, Stmt};
     use are_lexer::lex_source;
     use std::path::Path;
 
@@ -968,20 +1029,19 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
         let module = module.expect("module parses");
-        assert_eq!(module.items.len(), 15);
+        assert_eq!(module.items.len(), 14);
         assert!(matches!(module.items.last(), Some(Item::Service(_))));
+        assert!(module.items.iter().any(|item| {
+            matches!(
+                item,
+                Item::Model(model)
+                    if model.name == "User"
+                        && model.fields.iter().any(|field| field.name == "id")
+                        && model.fields.iter().any(|field| field.name == "email")
+            )
+        }));
 
-        let health = module
-            .items
-            .iter()
-            .find_map(|item| {
-                if let Item::Function(function) = item {
-                    (function.name == "health").then_some(function)
-                } else {
-                    None
-                }
-            })
-            .expect("health function");
+        let health = function_named(&module, "health");
         let FunctionBody::Parsed { block } = &health.body else {
             panic!("health body should parse into a return block");
         };
@@ -990,17 +1050,7 @@ mod tests {
         };
         assert!(matches!(value, Expr::Call { .. }));
 
-        let validate_user = module
-            .items
-            .iter()
-            .find_map(|item| {
-                if let Item::Function(function) = item {
-                    (function.name == "validate_user").then_some(function)
-                } else {
-                    None
-                }
-            })
-            .expect("validate_user function");
+        let validate_user = function_named(&module, "validate_user");
         let FunctionBody::Parsed { block } = &validate_user.body else {
             panic!("validate_user body should parse into statements");
         };
@@ -1010,17 +1060,7 @@ mod tests {
             Some(Stmt::Ensure { .. })
         ));
 
-        let create_user = module
-            .items
-            .iter()
-            .find_map(|item| {
-                if let Item::Function(function) = item {
-                    (function.name == "create_user").then_some(function)
-                } else {
-                    None
-                }
-            })
-            .expect("create_user function");
+        let create_user = function_named(&module, "create_user");
         let FunctionBody::Parsed { block } = &create_user.body else {
             panic!("create_user body should parse into statements");
         };
@@ -1028,17 +1068,7 @@ mod tests {
         assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
         assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 
-        let get_user = module
-            .items
-            .iter()
-            .find_map(|item| {
-                if let Item::Function(function) = item {
-                    (function.name == "get_user").then_some(function)
-                } else {
-                    None
-                }
-            })
-            .expect("get_user function");
+        let get_user = function_named(&module, "get_user");
         let FunctionBody::Parsed { block } = &get_user.body else {
             panic!("get_user body should parse into statements");
         };
@@ -1046,17 +1076,7 @@ mod tests {
         assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
         assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 
-        let map_error = module
-            .items
-            .iter()
-            .find_map(|item| {
-                if let Item::Function(function) = item {
-                    (function.name == "map_error").then_some(function)
-                } else {
-                    None
-                }
-            })
-            .expect("map_error function");
+        let map_error = function_named(&module, "map_error");
         let FunctionBody::Parsed { block } = &map_error.body else {
             panic!("map_error body should parse into a match statement");
         };
@@ -1064,6 +1084,20 @@ mod tests {
             block.statements.first(),
             Some(Stmt::Match { arms, .. }) if arms.len() == 3
         ));
+    }
+
+    fn function_named<'a>(module: &'a Module, name: &str) -> &'a FunctionDecl {
+        module
+            .items
+            .iter()
+            .find_map(|item| {
+                if let Item::Function(function) = item {
+                    (function.name == name).then_some(function)
+                } else {
+                    None
+                }
+            })
+            .expect("function exists")
     }
 
     #[test]

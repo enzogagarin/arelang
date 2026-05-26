@@ -8,6 +8,7 @@ members = [
     "crates/are-parser",
     "crates/are-project",
     "crates/are-resolver",
+    "crates/are-semantics",
     "crates/are-http-runtime",
     "crates/are-typecheck",
 ]

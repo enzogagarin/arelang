@@ -1,4 +1,5 @@
 use are_ast::{CallArg, Expr, FunctionBody, FunctionDecl, Path, Stmt, TypeExpr};
+use are_semantics::{Builtin, builtin_by_callee};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 
@@ -282,50 +283,50 @@ impl<'a, H: Host> Interpreter<'a, H> {
         type_args: &[TypeExpr],
         args: &[CallArg],
     ) -> Result<Value, InterpretError> {
-        match callee {
-            "Http.Response.ok" => {
+        match builtin_by_callee(callee) {
+            Some(Builtin::HttpResponseOk) => {
                 let body = self.single_json_arg(callee, args)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status: 200, body }))
             }
-            "Http.Response.created" => {
+            Some(Builtin::HttpResponseCreated) => {
                 let body = self.single_json_arg(callee, args)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status: 201, body }))
             }
-            "req.json" => {
+            Some(Builtin::RequestJson) => {
                 Self::expect_arity(callee, args, 0)?;
                 let type_name = type_args.first().and_then(type_expr_name);
                 self.host
                     .read_json_body(type_name.as_deref())
                     .map(Value::Json)
             }
-            "validate.email" => {
+            Some(Builtin::ValidateEmail) => {
                 let value = self.single_json_arg(callee, args)?;
                 self.host.validate_email(&value)?;
                 Ok(Value::Unit)
             }
-            "validate.length" => {
+            Some(Builtin::ValidateLength) => {
                 let value = self.positional_json_arg(callee, args, 0, 1)?;
                 let min = self.named_i64_arg(callee, args, "min")?;
                 let max = self.named_i64_arg(callee, args, "max")?;
                 self.host.validate_length(&value, min, max)?;
                 Ok(Value::Unit)
             }
-            "ctx.state.users.insert" => {
+            Some(Builtin::StateUsersInsert) => {
                 let input = self.single_json_arg(callee, args)?;
                 self.host.insert_user(input).map(Value::Json)
             }
-            "ctx.param" => {
+            Some(Builtin::ContextParam) => {
                 let name = self.single_string_arg(callee, args)?;
                 let type_name = type_args.first().and_then(type_expr_name);
                 self.host
                     .read_path_param(type_name.as_deref(), &name)
                     .map(Value::Json)
             }
-            "ctx.state.users.get" => {
+            Some(Builtin::StateUsersGet) => {
                 let id = self.single_json_arg(callee, args)?;
                 self.host.get_user(id).map(Value::Json)
             }
-            _ => Err(InterpretError::UnsupportedExpression(callee.to_string())),
+            None => Err(InterpretError::UnsupportedExpression(callee.to_string())),
         }
     }
 

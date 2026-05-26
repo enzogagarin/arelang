@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 are-ast = { path = "../are-ast" }
+are-semantics = { path = "../are-semantics" }
 serde_json = "1.0"
 
 [dev-dependencies]
@@ -16,4 +17,3 @@ are-parser = { path = "../are-parser" }
 
 [lints]
 workspace = true
-

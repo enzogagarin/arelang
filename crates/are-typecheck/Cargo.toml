@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 are-ast = { path = "../are-ast" }
 are-diagnostics = { path = "../are-diagnostics" }
+are-semantics = { path = "../are-semantics" }
 
 [dev-dependencies]
 are-lexer = { path = "../are-lexer" }
@@ -17,4 +18,3 @@ are-resolver = { path = "../are-resolver" }
 
 [lints]
 workspace = true
-

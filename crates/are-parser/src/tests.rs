@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 18);
+    assert_eq!(module.items.len(), 21);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -122,6 +122,7 @@ fn parses_method_shorthand_route_contracts() {
             service UsersApi(state: AppState) {
                 post "/users" body CreateUserInput -> create_user returns User status 201
                 get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
+                get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
                 get "/users/{id: UserId}" -> get_user returns User status 200
             }
         "#;
@@ -147,12 +148,20 @@ fn parses_method_shorthand_route_contracts() {
     assert_eq!(service.routes[1].path, "/users/search");
     assert!(service.routes[1].body_type.is_none());
     assert!(service.routes[1].query_type.is_some());
+    assert!(service.routes[1].headers_type.is_none());
     assert_eq!(service.routes[1].status.expect("status").value, 200);
     assert_eq!(service.routes[2].method, "GET");
-    assert_eq!(service.routes[2].path, "/users/{id: UserId}");
+    assert_eq!(service.routes[2].path, "/users/auth-check");
     assert!(service.routes[2].body_type.is_none());
     assert!(service.routes[2].query_type.is_none());
+    assert!(service.routes[2].headers_type.is_some());
     assert_eq!(service.routes[2].status.expect("status").value, 200);
+    assert_eq!(service.routes[3].method, "GET");
+    assert_eq!(service.routes[3].path, "/users/{id: UserId}");
+    assert!(service.routes[3].body_type.is_none());
+    assert!(service.routes[3].query_type.is_none());
+    assert!(service.routes[3].headers_type.is_none());
+    assert_eq!(service.routes[3].status.expect("status").value, 200);
 }
 
 #[test]
@@ -161,6 +170,7 @@ fn rejects_duplicate_route_input_contracts() {
             service UsersApi(state: AppState) {
                 post "/users" body CreateUserInput body OtherInput -> create_user returns User status 201
                 get "/users/search" query SearchUsersQuery query OtherQuery -> search_users returns SearchUsersResponse status 200
+                get "/users/auth-check" headers AuthHeaders headers OtherHeaders -> auth_check returns AuthCheckResponse status 200
             }
         "#;
     let file = Path::new("test.are");
@@ -170,7 +180,7 @@ fn rejects_duplicate_route_input_contracts() {
     let (module, diagnostics) = parse_tokens(file, &tokens);
 
     assert!(module.is_none());
-    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    assert_eq!(diagnostics.len(), 3, "{diagnostics:#?}");
     assert!(
         diagnostics
             .iter()
@@ -185,5 +195,10 @@ fn rejects_duplicate_route_input_contracts() {
         diagnostics
             .iter()
             .any(|diagnostic| diagnostic.problem == "duplicate route query contract")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.problem == "duplicate route headers contract")
     );
 }

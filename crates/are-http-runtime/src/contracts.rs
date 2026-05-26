@@ -23,6 +23,7 @@ pub struct HttpRouteContract {
     pub path: String,
     pub body_type: Option<String>,
     pub query_type: Option<String>,
+    pub headers_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
     pub path_params: Vec<HttpPathParam>,
@@ -97,6 +98,7 @@ pub struct TestRoute {
     pub path: String,
     pub body_type: Option<String>,
     pub query_type: Option<String>,
+    pub headers_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
     pub path_params: Vec<TestPathParam>,
@@ -166,6 +168,7 @@ impl HttpContractManifest {
                 path: route.path.clone(),
                 body_type: route.body_type.clone(),
                 query_type: route.query_type.clone(),
+                headers_type: route.headers_type.clone(),
                 response_type: route.response_type.clone(),
                 status: route.status,
                 path_params: route
@@ -240,6 +243,10 @@ pub(crate) fn route_summary_line(route: &HttpRouteContract) -> String {
         contract.push_str(" query ");
         contract.push_str(query_type);
     }
+    if let Some(headers_type) = &route.headers_type {
+        contract.push_str(" headers ");
+        contract.push_str(headers_type);
+    }
     if let Some(response_type) = &route.response_type {
         contract.push_str(" returns ");
         contract.push_str(response_type);
@@ -299,6 +306,7 @@ fn runtime_route(route: &RouteDecl) -> HttpRouteContract {
         path: route.path.clone(),
         body_type: route.body_type.as_ref().map(type_expr_name),
         query_type: route.query_type.as_ref().map(type_expr_name),
+        headers_type: route.headers_type.as_ref().map(type_expr_name),
         response_type: route.response_type.as_ref().map(type_expr_name),
         status: route.status.map(|status| status.value),
         path_params: path_params_from_path(&route.path),

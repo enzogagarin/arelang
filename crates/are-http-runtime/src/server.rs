@@ -5,6 +5,7 @@ use crate::request::RuntimeRequest;
 use crate::response::runtime_response;
 use crate::store::RuntimeState;
 use are_project::Manifest;
+use std::collections::HashMap;
 use std::path::Path;
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
@@ -53,17 +54,31 @@ fn handle_tiny_request(
 ) -> Result<(), RuntimeError> {
     let method = request.method().clone();
     let url = request.url().to_string();
+    let headers = request_headers(&request);
     let mut body = String::new();
     request
         .as_reader()
         .read_to_string(&mut body)
         .map_err(|err| RuntimeError::Server(format!("failed to read request body: {err}")))?;
 
-    let runtime_request = RuntimeRequest::new(method, url, body);
+    let runtime_request = RuntimeRequest::new(method, url, body).with_headers(headers);
     let response = runtime_response(state, contracts, functions, &runtime_request);
     request
         .respond(json_response(response.status, &response.body))
         .map_err(|err| RuntimeError::Server(format!("failed to write response: {err}")))
+}
+
+fn request_headers(request: &Request) -> HashMap<String, String> {
+    request
+        .headers()
+        .iter()
+        .map(|header| {
+            (
+                header.field.as_str().to_string().to_ascii_lowercase(),
+                header.value.as_str().to_string(),
+            )
+        })
+        .collect()
 }
 
 fn json_response(status: u16, body: &serde_json::Value) -> Response<std::io::Cursor<Vec<u8>>> {

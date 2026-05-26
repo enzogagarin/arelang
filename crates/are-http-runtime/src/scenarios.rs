@@ -85,6 +85,17 @@ pub(crate) fn test_users_scenario(
     expect_json_string(&searched, "email", "ada@example.com", "GET /users/search")?;
     checks.push("GET /users/search decodes typed query params".to_string());
 
+    let auth_check = runtime_response(
+        &state,
+        &prepared.contracts,
+        &prepared.functions,
+        &RuntimeRequest::new(Method::Get, "/users/auth-check", "")
+            .with_header("authorization", "Bearer dev-token"),
+    );
+    expect_status(&auth_check, 200, "GET /users/auth-check")?;
+    expect_json_bool(&auth_check, "authorized", true, "GET /users/auth-check")?;
+    checks.push("GET /users/auth-check decodes typed headers".to_string());
+
     let fetched = runtime_response(
         &state,
         &prepared.contracts,
@@ -139,6 +150,27 @@ fn expect_json_u64(
     label: &str,
 ) -> Result<(), RuntimeError> {
     if response.body.get(field).and_then(serde_json::Value::as_u64) == Some(expected) {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected JSON field `{field}` to be `{expected}`, got {}",
+        response.body
+    )))
+}
+
+fn expect_json_bool(
+    response: &RuntimeResponse,
+    field: &str,
+    expected: bool,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response
+        .body
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        == Some(expected)
+    {
         return Ok(());
     }
 

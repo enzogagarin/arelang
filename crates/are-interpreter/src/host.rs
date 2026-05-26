@@ -18,6 +18,14 @@ pub trait Host {
     /// cannot be decoded as the requested type.
     fn read_query_params(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
 
+    /// Decode the current HTTP request headers as a typed JSON object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when required headers are missing or cannot be decoded
+    /// as the requested type.
+    fn read_headers(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
+
     /// Check whether a JSON string is email-like.
     ///
     /// # Errors
@@ -77,6 +85,10 @@ impl Host for NoopHost {
 
     fn read_query_params(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression("req.query".into()))
+    }
+
+    fn read_headers(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression("req.headers".into()))
     }
 
     fn validate_email(&mut self, _value: &JsonValue) -> Result<bool, InterpretError> {

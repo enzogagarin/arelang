@@ -58,6 +58,9 @@ impl TypeChecker<'_> {
                         if let Some(query_type) = &route.query_type {
                             self.check_type_expr_arity(query_type);
                         }
+                        if let Some(headers_type) = &route.headers_type {
+                            self.check_type_expr_arity(headers_type);
+                        }
                         if let Some(response_type) = &route.response_type {
                             self.check_type_expr_arity(response_type);
                         }
@@ -553,7 +556,10 @@ impl BodyChecker<'_> {
         if !type_args.is_empty()
             && !matches!(
                 builtin,
-                Builtin::RequestJson | Builtin::RequestQuery | Builtin::ContextParam
+                Builtin::RequestJson
+                    | Builtin::RequestQuery
+                    | Builtin::RequestHeaders
+                    | Builtin::ContextParam
             )
         {
             self.error(
@@ -563,7 +569,7 @@ impl BodyChecker<'_> {
                     "`{callee_name}` does not accept type argument(s), got {}",
                     type_args.len()
                 ),
-                "only generic std calls such as `req.json<T>()` and `req.query<T>()` accept type arguments",
+                "only generic std calls such as `req.json<T>()`, `req.query<T>()`, and `req.headers<T>()` accept type arguments",
             );
         }
 
@@ -601,7 +607,7 @@ impl BodyChecker<'_> {
                 });
                 BodyType::HttpResponse
             }
-            Builtin::RequestJson | Builtin::RequestQuery => {
+            Builtin::RequestJson | Builtin::RequestQuery | Builtin::RequestHeaders => {
                 self.expect_positional_arity(callee_name, args, 0, range);
                 let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)
@@ -1036,7 +1042,7 @@ impl BodyChecker<'_> {
                     "`{callee}` expects 1 type argument, got {}",
                     type_args.len()
                 ),
-                "write the expected payload type explicitly, such as `req.json<CreateUserInput>()`",
+                "write the expected payload type explicitly, such as `req.json<CreateUserInput>()`, `req.query<SearchUsersQuery>()`, or `req.headers<AuthHeaders>()`",
             );
             return BodyType::Unknown;
         }

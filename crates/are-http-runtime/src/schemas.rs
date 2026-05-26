@@ -71,7 +71,7 @@ impl RuntimeSchemas {
     ) -> Result<serde_json::Value, InterpretError> {
         let values = parse_query_string(query);
         let fields = self
-            .query_fields(type_name)
+            .payload_fields(type_name)
             .ok_or_else(|| api_invalid_input("invalid_query"))?;
         let mut object = serde_json::Map::new();
 
@@ -84,7 +84,7 @@ impl RuntimeSchemas {
                 return Err(api_invalid_input(&format!("missing_{}", field.name)));
             };
 
-            let value = self.decode_query_value(field.ty, &field.name, raw)?;
+            let value = self.decode_text_value(field.ty, &field.name, raw)?;
             object.insert(field.name, value);
         }
 
@@ -93,6 +93,42 @@ impl RuntimeSchemas {
             Ok(value)
         } else {
             Err(api_invalid_input("invalid_query"))
+        }
+    }
+
+    pub(crate) fn decode_headers(
+        &self,
+        type_name: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let fields = self
+            .payload_fields(type_name)
+            .ok_or_else(|| api_invalid_input("invalid_headers"))?;
+        let mut object = serde_json::Map::new();
+
+        for field in fields {
+            let header_name = header_name_for_field(&field.name);
+            let raw_field_name = field.name.to_ascii_lowercase();
+            let Some(raw) = headers
+                .get(header_name.as_str())
+                .or_else(|| headers.get(raw_field_name.as_str()))
+            else {
+                if field.optional {
+                    continue;
+                }
+
+                return Err(api_invalid_input(&format!("missing_{}", field.name)));
+            };
+
+            let value = self.decode_text_value(field.ty, &field.name, raw)?;
+            object.insert(field.name, value);
+        }
+
+        let value = serde_json::Value::Object(object);
+        if self.validate_value(type_name, &value) {
+            Ok(value)
+        } else {
+            Err(api_invalid_input("invalid_headers"))
         }
     }
 
@@ -210,12 +246,12 @@ impl RuntimeSchemas {
         self.primitive_root(&path.segments[0])
     }
 
-    fn query_fields(&self, type_name: &str) -> Option<Vec<QueryField<'_>>> {
+    fn payload_fields(&self, type_name: &str) -> Option<Vec<PayloadField<'_>>> {
         if let Some(decl) = self.structs.get(type_name) {
             return Some(
                 decl.fields
                     .iter()
-                    .map(|field| QueryField {
+                    .map(|field| PayloadField {
                         name: field.name.clone(),
                         ty: &field.ty,
                         optional: type_expr_is_optional(&field.ty),
@@ -228,7 +264,7 @@ impl RuntimeSchemas {
             return Some(
                 decl.fields
                     .iter()
-                    .map(|field| QueryField {
+                    .map(|field| PayloadField {
                         name: field.name.clone(),
                         ty: &field.ty,
                         optional: type_expr_is_optional(&field.ty),
@@ -240,7 +276,7 @@ impl RuntimeSchemas {
         None
     }
 
-    fn decode_query_value(
+    fn decode_text_value(
         &self,
         ty: &TypeExpr,
         name: &str,
@@ -280,7 +316,7 @@ impl RuntimeSchemas {
     }
 }
 
-struct QueryField<'a> {
+struct PayloadField<'a> {
     name: String,
     ty: &'a TypeExpr,
     optional: bool,
@@ -331,6 +367,10 @@ fn parse_query_string(query: &str) -> HashMap<String, String> {
     }
 
     values
+}
+
+pub(crate) fn header_name_for_field(name: &str) -> String {
+    name.replace('_', "-").to_ascii_lowercase()
 }
 
 fn percent_decode(value: &str) -> String {

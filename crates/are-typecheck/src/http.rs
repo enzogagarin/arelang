@@ -14,6 +14,7 @@ impl TypeChecker<'_> {
             let path_params = self.check_route_shape(route);
             self.check_route_body_contract(route);
             self.check_route_query_contract(route);
+            self.check_route_headers_contract(route);
             self.check_route_response_contract(route);
 
             let Some(handler) = route
@@ -167,6 +168,25 @@ impl TypeChecker<'_> {
         }
     }
 
+    fn check_route_headers_contract(&mut self, route: &RouteDecl) {
+        let Some(headers_type) = &route.headers_type else {
+            return;
+        };
+
+        if !self.is_local_payload_type(headers_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0440",
+                &self.file,
+                headers_type.range(),
+                format!(
+                    "route headers `{}` is not a local payload type",
+                    type_name(headers_type)
+                ),
+                "headers contracts should name a local struct such as `AuthHeaders`",
+            ));
+        }
+    }
+
     fn check_route_response_contract(&mut self, route: &RouteDecl) {
         if let Some(response_type) = &route.response_type
             && !self.is_response_payload_type(response_type)
@@ -206,6 +226,7 @@ impl TypeChecker<'_> {
         self.check_route_path_param_contract(route, handler, path_params, &uses);
         self.check_route_body_decode_contract(route, handler, &uses);
         self.check_route_query_decode_contract(route, handler, &uses);
+        self.check_route_headers_decode_contract(route, handler, &uses);
     }
 
     fn check_route_path_param_contract(
@@ -390,6 +411,61 @@ impl TypeChecker<'_> {
                     handler.name
                 ),
                 "declare the route query as `get \"/path\" query QueryPayload -> handler`",
+            ));
+        }
+    }
+
+    fn check_route_headers_decode_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        uses: &HandlerIoUses,
+    ) {
+        if let Some(headers_type) = &route.headers_type {
+            let expected = type_name(headers_type);
+            if uses.request_headers.is_empty() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0441",
+                    &self.file,
+                    route.range,
+                    format!(
+                        "route headers `{expected}` is not decoded by handler `{}`",
+                        handler.name
+                    ),
+                    "decode the declared headers with `req.headers<T>()` inside the route handler",
+                ));
+                return;
+            }
+
+            if !uses
+                .request_headers
+                .iter()
+                .any(|headers_use| headers_use.ty.as_deref() == Some(expected.as_str()))
+            {
+                let actual = uses
+                    .request_headers
+                    .iter()
+                    .filter_map(|headers_use| headers_use.ty.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0442",
+                    &self.file,
+                    route.range,
+                    format!("route headers `{expected}` does not match handler decode `{actual}`"),
+                    "the service route headers contract and req.headers<T>() type must match",
+                ));
+            }
+        } else if let Some(headers_use) = uses.request_headers.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0443",
+                &self.file,
+                headers_use.range,
+                format!(
+                    "handler `{}` decodes headers without a route headers contract",
+                    handler.name
+                ),
+                "declare the route headers as `get \"/path\" headers HeaderPayload -> handler`",
             ));
         }
     }
@@ -812,11 +888,18 @@ struct RequestQueryUse {
     range: SourceRange,
 }
 
+#[derive(Debug, Clone)]
+struct RequestHeadersUse {
+    ty: Option<String>,
+    range: SourceRange,
+}
+
 #[derive(Debug, Default)]
 struct HandlerIoUses {
     path_params: Vec<PathParamUse>,
     request_bodies: Vec<RequestBodyUse>,
     request_queries: Vec<RequestQueryUse>,
+    request_headers: Vec<RequestHeadersUse>,
 }
 
 fn collect_handler_io_uses(function: &FunctionDecl) -> HandlerIoUses {
@@ -880,6 +963,11 @@ fn collect_expr_io_uses(expr: &Expr, uses: &mut HandlerIoUses) {
                 });
             } else if callee_name == "req.query" {
                 uses.request_queries.push(RequestQueryUse {
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            } else if callee_name == "req.headers" {
+                uses.request_headers.push(RequestHeadersUse {
                     ty: single_type_arg_name(type_args),
                     range: *range,
                 });

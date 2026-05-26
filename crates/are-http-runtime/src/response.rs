@@ -20,6 +20,7 @@ struct HandlerRequest<'a> {
     params: &'a HashMap<String, String>,
     body: &'a str,
     query: &'a str,
+    headers: &'a HashMap<String, String>,
 }
 
 pub(crate) fn runtime_response(
@@ -49,6 +50,7 @@ pub(crate) fn runtime_response(
             params: &params,
             body: &request.body,
             query: request.query(),
+            headers: &request.headers,
         },
     );
     apply_route_response_contract(route, functions, response)
@@ -104,6 +106,7 @@ fn interpreted_response(
         params: request.params,
         request_body: request.body,
         query: request.query,
+        headers: request.headers,
         schemas: &functions.schemas,
     };
 

@@ -375,7 +375,11 @@ impl<'a> Parser<'a> {
         let path_token = self.expect_kind(&TokenKind::String, "expected route path string")?;
         let mut body_type = None;
         let mut query_type = None;
-        while self.check_identifier("body") || self.check_identifier("query") {
+        let mut headers_type = None;
+        while self.check_identifier("body")
+            || self.check_identifier("query")
+            || self.check_identifier("headers")
+        {
             if let Some(keyword_range) = self.match_identifier("body") {
                 let parsed_body_type = self.parse_type_expr()?;
                 if body_type.is_some() {
@@ -401,6 +405,19 @@ impl<'a> Parser<'a> {
                     ));
                 } else {
                     query_type = Some(parsed_query_type);
+                }
+            } else if let Some(keyword_range) = self.match_identifier("headers") {
+                let parsed_headers_type = self.parse_type_expr()?;
+                if headers_type.is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_PARSE_0010",
+                        &self.file,
+                        SourceRange::new(keyword_range.start, parsed_headers_type.range().end),
+                        "duplicate route headers contract",
+                        "a route can declare at most one `headers Payload` clause",
+                    ));
+                } else {
+                    headers_type = Some(parsed_headers_type);
                 }
             }
         }
@@ -431,6 +448,7 @@ impl<'a> Parser<'a> {
             path: unquote(&path_token.lexeme),
             body_type,
             query_type,
+            headers_type,
             handler,
             response_type,
             status,

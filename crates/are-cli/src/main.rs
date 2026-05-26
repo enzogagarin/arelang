@@ -234,6 +234,9 @@ fn create_project(
                 "  curl -X POST http://{host}:{port}/users -H 'content-type: application/json' -d '{{\"email\":\"ada@example.com\",\"name\":\"Ada Lovelace\"}}'"
             );
             println!("  curl 'http://{host}:{port}/users/search?email=ada%40example.com'");
+            println!(
+                "  curl http://{host}:{port}/users/auth-check -H 'authorization: Bearer dev-token'"
+            );
             println!("  curl http://{host}:{port}/users/1");
         }
     }
@@ -376,6 +379,7 @@ fn print_test_report(report: &TestReport) {
             &route.path,
             route.body_type.as_deref(),
             route.query_type.as_deref(),
+            route.headers_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -517,6 +521,7 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
             &route.path,
             route.body_type.as_deref(),
             route.query_type.as_deref(),
+            route.headers_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -658,6 +663,7 @@ fn route_contract_label(
     path: &str,
     body_type: Option<&str>,
     query_type: Option<&str>,
+    headers_type: Option<&str>,
     response_type: Option<&str>,
     status: Option<u16>,
 ) -> String {
@@ -668,6 +674,10 @@ fn route_contract_label(
     if let Some(query_type) = query_type {
         contract.push_str(" query ");
         contract.push_str(query_type);
+    }
+    if let Some(headers_type) = headers_type {
+        contract.push_str(" headers ");
+        contract.push_str(headers_type);
     }
     if let Some(response_type) = response_type {
         contract.push_str(" returns ");
@@ -794,6 +804,14 @@ struct SearchUsersResponse {{
     email: Email
 }}
 
+struct AuthHeaders {{
+    authorization: String
+}}
+
+struct AuthCheckResponse {{
+    authorized: Bool
+}}
+
 model User {{
     id: UserId primary
     email: Email unique
@@ -827,6 +845,12 @@ fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Search
     return {{ "email": query.email }}
 }}
 
+fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthCheckResponse, ApiError> {{
+    let headers = req.headers<AuthHeaders>()?
+    ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
+    return {{ "authorized": true }}
+}}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {{
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -847,6 +871,7 @@ service {service_name}(state: AppState) {{
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
+    get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/users/{{id: UserId}}" -> get_user returns User status 200
 }}
 "#
@@ -951,6 +976,7 @@ mod tests {
                 "/users",
                 Some("CreateUserInput"),
                 None,
+                None,
                 Some("User"),
                 Some(201)
             ),
@@ -961,10 +987,22 @@ mod tests {
                 "/users/search",
                 None,
                 Some("SearchUsersQuery"),
+                None,
                 Some("SearchUsersResponse"),
                 Some(200)
             ),
             "/users/search query SearchUsersQuery returns SearchUsersResponse status 200"
+        );
+        assert_eq!(
+            route_contract_label(
+                "/users/auth-check",
+                None,
+                None,
+                Some("AuthHeaders"),
+                Some("AuthCheckResponse"),
+                Some(200)
+            ),
+            "/users/auth-check headers AuthHeaders returns AuthCheckResponse status 200"
         );
     }
 
@@ -993,6 +1031,7 @@ mod tests {
         assert!(source.contains("model User"));
         assert!(source.contains("fn create_user"));
         assert!(source.contains("fn search_users"));
+        assert!(source.contains("fn auth_check"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
         assert!(source.contains(
@@ -1000,6 +1039,9 @@ mod tests {
         ));
         assert!(source.contains(
             r#"get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200"#
+        ));
+        assert!(source.contains(
+            r#"get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200"#
         ));
         assert!(
             source.contains(r#"get "/users/{id: UserId}" -> get_user returns User status 200"#)

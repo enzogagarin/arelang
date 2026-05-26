@@ -70,7 +70,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
-- typecheck function signatures, generic arity, route handlers, route body/query contracts, route response/status contracts, typed path params, and HTTP error mappers
+- typecheck function signatures, generic arity, route handlers, route body/query/headers contracts, route response/status contracts, typed path params, and HTTP error mappers
 - resolve model database calls such as `ctx.db.users.insert` from local `model User` declarations
 - emit human or JSON diagnostics
 
@@ -100,14 +100,14 @@ Current `are run` behavior:
 - normalize incoming HTTP requests into the MVP runtime request type
 - wrap domain payload handler results using the route response/status contract
 - persist MVP model data through the model-backed in-memory store
-- validate route-level body, query, path, response, and status contracts at the host boundary
+- validate route-level body, query, headers, path, response, and status contracts at the host boundary
 - start the embedded HTTP MVP runtime
 
 Current `are test` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - collect the checked service route registry
-- expose route body, query, response, status, typed path param, and handler data in the test report
+- expose route body, query, headers, response, status, typed path param, and handler data in the test report
 - execute built-in MVP runtime scenarios without opening a TCP listener
 - emit human or JSON test reports
 
@@ -115,7 +115,7 @@ Current `are inspect` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - build the checked HTTP contract manifest without opening a TCP listener
-- emit service, routes, body type, query type, response type, status, typed path params, handler, local schema, and error mapper data in human or JSON form
+- emit service, routes, body type, query type, headers type, response type, status, typed path params, handler, local schema, and error mapper data in human or JSON form
 
 Current `are openapi` behavior:
 
@@ -123,7 +123,7 @@ Current `are openapi` behavior:
 - emit an OpenAPI 3.1 JSON document without opening a TCP listener
 - map checked service routes to `paths`
 - map route body and response contracts to JSON request and response schemas
-- map typed path params and typed query contracts to OpenAPI parameters
+- map typed path params plus typed query/header contracts to OpenAPI parameters
 - map aliases, structs, models, and enums to `components.schemas`
 - preserve Arelang-specific model metadata through `x-are-*` extensions
 - write the generated document with `--output`

@@ -110,15 +110,15 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 
 `are fmt` rewrites `.are` files into the canonical Arelang style. `--check` verifies formatting without writing, which is what CI uses. The first formatter intentionally refuses to rewrite files with comments until comment-preserving formatting is implemented.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, request query decoding, validation, route params, database access, return types, route request/response/status contracts, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON/query/header decoding, validation, route params, database access, return types, route request/response/status contracts, and `?` usage.
 
 `are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
 
-The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, query type, response type, success status, handler binding, local type/model/enum schemas, and error mapper. `are run` uses it to route and validate responses; `are test --json` exposes the same route contract data for tools.
+The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, query type, headers type, response type, success status, handler binding, local type/model/enum schemas, and error mapper. `are run` uses it to route and validate responses; `are test --json` exposes the same route contract data for tools.
 
 `are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface, including aliases, structs, models, enum variants, model collections, and primary/unique model field metadata. This is the seed for OpenAPI/client generation and lets Arelang expose backend contracts without making users read the runtime internals.
 
-`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params and typed query contracts to OpenAPI parameters, and Arelang aliases, structs, models, and enums to `components.schemas`. By default it prints to stdout; `--output openapi.json` writes a stable file, and `--check` fails when that file has drifted from the current Arelang source. Without `--output`, `--check` looks for `openapi.json` in the project root.
+`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params plus typed query/header contracts to OpenAPI parameters, and Arelang aliases, structs, models, and enums to `components.schemas`. By default it prints to stdout; `--output openapi.json` writes a stable file, and `--check` fails when that file has drifted from the current Arelang source. Without `--output`, `--check` looks for `openapi.json` in the project root.
 
 `are audit` is the first production-shape safety loop. It runs static checks, builds the HTTP contract manifest, verifies every route has a response type and success status, and checks `[capabilities]` in `are.toml` against the server listen address and the MVP least-privilege defaults. It fails on missing required listen capability, missing capability manifest, static check failures, or process spawning being enabled.
 
@@ -141,7 +141,7 @@ help: did you mean `create_user`?
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, `GET /users/search`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly, so handlers can decode HTTP inputs and return domain payloads without manually wrapping every success response:
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, `GET /users/search`, `GET /users/auth-check`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly, so handlers can decode HTTP inputs and return domain payloads without manually wrapping every success response:
 
 ```are
 fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
@@ -154,6 +154,12 @@ fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Search
     let query = req.query<SearchUsersQuery>()?
     return { "email": query.email }
 }
+
+fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthCheckResponse, ApiError> {
+    let headers = req.headers<AuthHeaders>()?
+    ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
+    return { "authorized": true }
+}
 ```
 
 ```are
@@ -163,11 +169,12 @@ service UsersApi(state: AppState) {
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
+    get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }
 ```
 
-The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `get "/users/search" query SearchUsersQuery` is decoded with `req.query<SearchUsersQuery>()`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
+The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `get "/users/search" query SearchUsersQuery` is decoded with `req.query<SearchUsersQuery>()`, that `get "/users/auth-check" headers AuthHeaders` is decoded with `req.headers<AuthHeaders>()`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health
@@ -175,5 +182,6 @@ curl -X POST http://127.0.0.1:8080/users \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com","name":"Ada"}'
 curl 'http://127.0.0.1:8080/users/search?email=ada%40example.com'
+curl http://127.0.0.1:8080/users/auth-check -H 'authorization: Bearer dev-token'
 curl http://127.0.0.1:8080/users/1
 ```

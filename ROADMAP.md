@@ -67,6 +67,7 @@ Output:
 - `?` propagation checks: done
 - route body contract checks: done
 - route query contract checks: done
+- route headers contract checks: done
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
 - model database call checks for `ctx.db.<collection>.insert/get`: started
@@ -101,7 +102,7 @@ Status: complete for the HTTP MVP.
 Output:
 
 - `service` route registry: done for one-service MVP projects
-- checked HTTP contract manifest: done for service, routes, body, query, response, status, typed params, handlers, local schemas, and error mapper
+- checked HTTP contract manifest: done for service, routes, body, query, headers, response, status, typed params, handlers, local schemas, and error mapper
 - local server runner: done for `users_api`
 - request/response runtime types: done for the MVP HTTP boundary
 - JSON decode/encode MVP: done for local structs/models with primitive fields
@@ -109,6 +110,7 @@ Output:
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
 - route query contracts: done for `query Payload`
+- route headers contracts: done for `headers Payload`
 - route response contracts: done for `returns Payload status N`
 - domain payload handlers: done for `Payload` and `Result<Payload, E>`
 - API error mapping: done through `Http.error_map`
@@ -119,7 +121,7 @@ Definition of done:
 - `GET /health` returns `200`: done
 - `POST /users` creates an in-memory user: done
 - `GET /users/{id: UserId}` returns that user or a typed error: done
-- canonical route contracts with method shorthand, typed path params, request body declarations, and request query declarations: done
+- canonical route contracts with method shorthand, typed path params, request body declarations, request query declarations, and request headers declarations: done
 - successful HTTP responses are validated against declared `returns` and `status` contracts: done
 - successful domain payloads are wrapped into HTTP responses by the route contract: done
 - function body interpreter replaces the temporary users API adapter: done
@@ -136,7 +138,7 @@ Output:
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
 - `are inspect` schema export: done for aliases, structs, models, enum variants, model collections, and primary/unique field metadata
-- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path/query params, servers, component schemas, file output, and drift checks
+- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path/query/header params, servers, component schemas, file output, and drift checks
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done

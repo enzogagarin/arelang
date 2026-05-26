@@ -47,6 +47,22 @@ fn formats_route_summary_lines() {
         line,
         "  POST   /users body CreateUserInput returns User status 201 -> create_user"
     );
+
+    let line = route_summary_line(&HttpRouteContract {
+        method: "GET".to_string(),
+        path: "/users/auth-check".to_string(),
+        body_type: None,
+        query_type: None,
+        headers_type: Some("AuthHeaders".to_string()),
+        response_type: Some("AuthCheckResponse".to_string()),
+        status: Some(200),
+        path_params: Vec::new(),
+        handler: "auth_check".to_string(),
+    });
+    assert_eq!(
+        line,
+        "  GET    /users/auth-check headers AuthHeaders returns AuthCheckResponse status 200 -> auth_check"
+    );
 }
 
 #[test]
@@ -58,7 +74,7 @@ fn builds_http_contract_manifest_from_service() {
         HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
 
     assert_eq!(contracts.service, "UsersApi");
-    assert_eq!(contracts.routes.len(), 4);
+    assert_eq!(contracts.routes.len(), 5);
     assert!(contracts.has("POST", "/users"));
     assert_eq!(contracts.error_mapper.as_deref(), Some("map_error"));
     assert_contract_schemas(&contracts);
@@ -81,6 +97,17 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(
         search_users.response_type.as_deref(),
         Some("SearchUsersResponse")
+    );
+
+    let auth_check = contracts
+        .routes
+        .iter()
+        .find(|route| route.method == "GET" && route.path == "/users/auth-check")
+        .expect("GET /users/auth-check");
+    assert_eq!(auth_check.headers_type.as_deref(), Some("AuthHeaders"));
+    assert_eq!(
+        auth_check.response_type.as_deref(),
+        Some("AuthCheckResponse")
     );
 
     let get_user = contracts
@@ -195,6 +222,36 @@ fn rejects_missing_users_api_query_params() {
 }
 
 #[test]
+fn handles_users_api_header_contracts() {
+    let state = RuntimeState::default();
+    let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
+    assert!(check.ok(), "{:#?}", check.diagnostics);
+    let service = find_single_service(&check.modules).expect("single service");
+    let contracts =
+        HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
+    let functions = RuntimeFunctions::from_modules(&check.modules);
+
+    let authorized = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/auth-check", "")
+            .with_header("authorization", "Bearer dev-token"),
+    );
+    assert_eq!(authorized.status, 200);
+    assert_eq!(authorized.body["authorized"], true);
+
+    let missing = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/auth-check", ""),
+    );
+    assert_eq!(missing.status, 400);
+    assert_eq!(missing.body["error"], "missing_authorization");
+}
+
+#[test]
 fn runtime_store_uses_model_collection_contracts() {
     let schemas = RuntimeSchemas {
         models: [("Post".to_string(), model_decl("Post", "title"))].into(),
@@ -202,11 +259,13 @@ fn runtime_store_uses_model_collection_contracts() {
     };
     let state = RuntimeState::default();
     let params = HashMap::new();
+    let headers = HashMap::new();
     let mut host = RuntimeHost {
         state: &state,
         params: &params,
         request_body: "",
         query: "",
+        headers: &headers,
         schemas: &schemas,
     };
 
@@ -256,7 +315,7 @@ fn tests_users_api_project() {
     let report = test_project(Path::new("../../examples/users_api")).expect("project tests");
     assert_eq!(report.package, "users-api");
     assert_eq!(report.service, "UsersApi");
-    assert_eq!(report.routes.len(), 4);
+    assert_eq!(report.routes.len(), 5);
     assert_eq!(report.scenarios.len(), 1);
     assert_eq!(report.scenarios[0].name, "users API HTTP flow");
 }
@@ -297,6 +356,12 @@ fn exports_users_api_openapi_document() {
         "#/components/schemas/Email"
     );
 
+    let auth_header_param = &document["paths"]["/users/auth-check"]["get"]["parameters"][0];
+    assert_eq!(auth_header_param["name"], "authorization");
+    assert_eq!(auth_header_param["in"], "header");
+    assert_eq!(auth_header_param["required"], true);
+    assert_eq!(auth_header_param["schema"]["type"], "string");
+
     let user = &document["components"]["schemas"]["User"];
     assert_eq!(user["x-are-collection"], "users");
     assert_eq!(user["properties"]["id"]["x-are-primary"], true);
@@ -328,6 +393,7 @@ fn route(
         path: path.to_string(),
         body_type: body_type.map(str::to_string),
         query_type: None,
+        headers_type: None,
         response_type: response_type.map(str::to_string),
         status,
         path_params: Vec::new(),

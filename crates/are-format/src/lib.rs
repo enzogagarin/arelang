@@ -280,6 +280,10 @@ fn format_service(output: &mut String, decl: &ServiceDecl) {
             output.push_str(" query ");
             output.push_str(&format_type_expr(query_type));
         }
+        if let Some(headers_type) = &route.headers_type {
+            output.push_str(" headers ");
+            output.push_str(&format_type_expr(headers_type));
+        }
         output.push_str(" -> ");
         output.push_str(&format_path(&route.handler));
         if let Some(response_type) = &route.response_type {

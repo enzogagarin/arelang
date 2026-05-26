@@ -87,11 +87,12 @@ service UsersApi(state: AppState) {
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
+    get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }
 ```
 
-The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, response contracts, status contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with `req.json<CreateUserInput>()`, `query SearchUsersQuery` must line up with `req.query<SearchUsersQuery>()`, `returns User status 201` must line up with the success response where the compiler can infer it, and `{id: UserId}` must line up with `ctx.param<UserId>("id")`.
+The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, headers contracts, response contracts, status contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with `req.json<CreateUserInput>()`, `query SearchUsersQuery` must line up with `req.query<SearchUsersQuery>()`, `headers AuthHeaders` must line up with `req.headers<AuthHeaders>()`, `returns User status 201` must line up with the success response where the compiler can infer it, and `{id: UserId}` must line up with `ctx.param<UserId>("id")`.
 
 ## v0 Keywords
 

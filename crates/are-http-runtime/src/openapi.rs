@@ -2,6 +2,7 @@ use crate::contracts::{
     HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpFieldSchema, HttpModelFieldSchema,
     HttpModelSchema, HttpRouteContract, HttpSchemaManifest, HttpStructSchema,
 };
+use crate::schemas::header_name_for_field;
 use are_project::Manifest;
 use serde_json::{Map, Value, json};
 
@@ -105,13 +106,16 @@ fn parameters(route: &HttpRouteContract, schemas: &HttpSchemaManifest) -> Vec<Va
         .collect::<Vec<_>>();
 
     if let Some(query_type) = &route.query_type {
-        parameters.extend(query_parameters(query_type, schemas));
+        parameters.extend(field_parameters(query_type, schemas, "query"));
+    }
+    if let Some(headers_type) = &route.headers_type {
+        parameters.extend(field_parameters(headers_type, schemas, "header"));
     }
 
     parameters
 }
 
-fn query_parameters(type_name: &str, schemas: &HttpSchemaManifest) -> Vec<Value> {
+fn field_parameters(type_name: &str, schemas: &HttpSchemaManifest, location: &str) -> Vec<Value> {
     if let Some(schema) = schemas
         .structs
         .iter()
@@ -120,7 +124,7 @@ fn query_parameters(type_name: &str, schemas: &HttpSchemaManifest) -> Vec<Value>
         return schema
             .fields
             .iter()
-            .map(|field| query_parameter(&field.name, &field.ty, !field.optional))
+            .map(|field| field_parameter(&field.name, &field.ty, !field.optional, location))
             .collect();
     }
 
@@ -132,17 +136,23 @@ fn query_parameters(type_name: &str, schemas: &HttpSchemaManifest) -> Vec<Value>
         return schema
             .fields
             .iter()
-            .map(|field| query_parameter(&field.name, &field.ty, !field.optional))
+            .map(|field| field_parameter(&field.name, &field.ty, !field.optional, location))
             .collect();
     }
 
     Vec::new()
 }
 
-fn query_parameter(name: &str, ty: &str, required: bool) -> Value {
+fn field_parameter(name: &str, ty: &str, required: bool, location: &str) -> Value {
+    let name = if location == "header" {
+        header_name_for_field(name)
+    } else {
+        name.to_string()
+    };
+
     json!({
         "name": name,
-        "in": "query",
+        "in": location,
         "required": required,
         "schema": type_schema(ty),
     })

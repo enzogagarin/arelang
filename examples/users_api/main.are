@@ -23,6 +23,14 @@ struct SearchUsersResponse {
     email: Email
 }
 
+struct AuthHeaders {
+    authorization: String
+}
+
+struct AuthCheckResponse {
+    authorized: Bool
+}
+
 model User {
     id: UserId primary
     email: Email unique
@@ -56,6 +64,12 @@ fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Search
     return { "email": query.email }
 }
 
+fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthCheckResponse, ApiError> {
+    let headers = req.headers<AuthHeaders>()?
+    ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
+    return { "authorized": true }
+}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -76,5 +90,6 @@ service UsersApi(state: AppState) {
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
+    get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }

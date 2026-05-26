@@ -109,6 +109,15 @@ assert_users_api_flow() {
     assert_eq "$search_status" "200" "$label search users HTTP status"
     assert_file_contains "$TMP_DIR/${label}_search_user.json" '"email":"ada@example.com"' "$label search users response"
 
+    local auth_status
+    auth_status="$(
+        curl -sS -o "$TMP_DIR/${label}_auth_check.json" -w '%{http_code}' \
+            "$base_url/users/auth-check" \
+            -H 'authorization: Bearer dev-token'
+    )"
+    assert_eq "$auth_status" "200" "$label auth check HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_auth_check.json" '"authorized":true' "$label auth check response"
+
     local get_status
     get_status="$(curl -sS -o "$TMP_DIR/${label}_get_user.json" -w '%{http_code}' "$base_url/users/1")"
     assert_eq "$get_status" "200" "$label get user HTTP status"
@@ -136,6 +145,8 @@ assert_file_contains "$TMP_DIR/users_openapi.json" '"openapi": "3.1.0"' "users O
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/{id}"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/search"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "query"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/auth-check"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "header"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"#/components/schemas/User"' "users OpenAPI document"
 run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" --check --output "$TMP_DIR/users_openapi.json"
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json

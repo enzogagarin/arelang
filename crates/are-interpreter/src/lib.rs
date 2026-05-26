@@ -285,6 +285,13 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                     .read_query_params(type_name.as_deref())
                     .map(Value::Json)
             }
+            Some(Builtin::RequestHeaders) => {
+                Self::expect_arity(&callee_name, args, 0)?;
+                let type_name = type_args.first().and_then(type_expr_name);
+                self.host
+                    .read_headers(type_name.as_deref())
+                    .map(Value::Json)
+            }
             Some(Builtin::ValidateEmail) => {
                 let value = self.single_json_arg(&callee_name, args)?;
                 self.host.validate_email(&value).map(Value::Bool)
@@ -784,6 +791,13 @@ mod tests {
             _type_name: Option<&str>,
         ) -> Result<serde_json::Value, InterpretError> {
             Err(InterpretError::UnsupportedExpression("req.query".into()))
+        }
+
+        fn read_headers(
+            &mut self,
+            _type_name: Option<&str>,
+        ) -> Result<serde_json::Value, InterpretError> {
+            Err(InterpretError::UnsupportedExpression("req.headers".into()))
         }
 
         fn validate_email(&mut self, value: &serde_json::Value) -> Result<bool, InterpretError> {

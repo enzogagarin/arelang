@@ -167,6 +167,9 @@ impl<'a> Resolver<'a> {
             if let Some(query_type) = &route.query_type {
                 self.resolve_type_expr(query_type);
             }
+            if let Some(headers_type) = &route.headers_type {
+                self.resolve_type_expr(headers_type);
+            }
             if let Some(response_type) = &route.response_type {
                 self.resolve_type_expr(response_type);
             }

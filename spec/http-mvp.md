@@ -23,8 +23,8 @@ Current implementation status:
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations
-- runtime preparation builds one checked HTTP contract manifest for service, routes, body types, response types, statuses, typed params, handlers, and the error mapper
-- `are inspect --json` exposes that checked HTTP contract manifest without starting the server
+- runtime preparation builds one checked HTTP contract manifest for service, routes, body types, response types, statuses, typed params, handlers, local schemas, and the error mapper
+- `are inspect --json` exposes that checked HTTP contract manifest without starting the server, including aliases, structs, models, enum variants, model collections, and model field metadata
 - `are audit --json` checks route contracts and `[capabilities]` against the HTTP server surface
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, response contracts, and success status contracts
 - incoming requests and outgoing responses pass through explicit MVP runtime request/response types
@@ -96,7 +96,7 @@ The compiler should check:
 - model database calls such as `ctx.db.users.insert(input)` resolve `users` from `model User`
 - duplicate method/path pairs are rejected
 
-At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body validation, domain payload wrapping, and success response validation. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
+At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body validation, domain payload wrapping, success response validation, and tool-facing API schema export. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
 
 ## Response Helpers
 

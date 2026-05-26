@@ -22,7 +22,9 @@ use std::path::{Path, PathBuf};
 use tiny_http::Server;
 
 pub use contracts::{
-    HttpContractManifest, HttpPathParam, HttpRouteContract, TestPathParam, TestRoute,
+    HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpEnumVariantSchema, HttpFieldSchema,
+    HttpModelFieldSchema, HttpModelSchema, HttpPathParam, HttpRouteContract, HttpSchemaManifest,
+    HttpStructSchema, TestPathParam, TestRoute,
 };
 
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
@@ -182,7 +184,7 @@ fn prepare_project(path: &Path) -> Result<PreparedProject, RuntimeError> {
     }
 
     let service = find_single_service(&check.modules)?;
-    let contracts = HttpContractManifest::from_service(service)?;
+    let contracts = HttpContractManifest::from_service_and_modules(service, &check.modules)?;
     let functions = RuntimeFunctions::from_modules(&check.modules);
 
     Ok(PreparedProject {

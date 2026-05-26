@@ -1,5 +1,6 @@
 use crate::contracts::{
-    HttpContractManifest, HttpRouteContract, find_single_service, match_route, route_summary_line,
+    HttpContractManifest, HttpRouteContract, HttpSchemaManifest, find_single_service, match_route,
+    route_summary_line,
 };
 use crate::functions::RuntimeFunctions;
 use crate::host::RuntimeHost;
@@ -52,12 +53,14 @@ fn builds_http_contract_manifest_from_service() {
     let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
     assert!(check.ok(), "{:#?}", check.diagnostics);
     let service = find_single_service(&check.modules).expect("single service");
-    let contracts = HttpContractManifest::from_service(service).expect("contracts");
+    let contracts =
+        HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
 
     assert_eq!(contracts.service, "UsersApi");
     assert_eq!(contracts.routes.len(), 3);
     assert!(contracts.has("POST", "/users"));
     assert_eq!(contracts.error_mapper.as_deref(), Some("map_error"));
+    assert_contract_schemas(&contracts);
 
     let create_user = contracts
         .routes
@@ -109,6 +112,7 @@ fn handles_users_api_flow() {
                 "get_user",
             ),
         ],
+        schemas: HttpSchemaManifest::default(),
         error_mapper: Some("map_error".to_string()),
     };
     let functions = users_api_functions();
@@ -246,6 +250,48 @@ fn route(
         path_params: Vec::new(),
         handler: handler.to_string(),
     }
+}
+
+fn assert_contract_schemas(contracts: &HttpContractManifest) {
+    let user_id = contracts
+        .schemas
+        .aliases
+        .iter()
+        .find(|schema| schema.name == "UserId")
+        .expect("UserId alias schema");
+    assert_eq!(user_id.aliased_type, "U64");
+    assert!(user_id.opaque);
+
+    let input = contracts
+        .schemas
+        .structs
+        .iter()
+        .find(|schema| schema.name == "CreateUserInput")
+        .expect("CreateUserInput struct schema");
+    assert_eq!(input.fields.len(), 2);
+    assert_eq!(input.fields[0].name, "email");
+    assert_eq!(input.fields[0].ty, "String");
+
+    let user = contracts
+        .schemas
+        .models
+        .iter()
+        .find(|schema| schema.name == "User")
+        .expect("User model schema");
+    assert_eq!(user.collection, "users");
+    assert_eq!(user.fields.len(), 3);
+    assert!(user.fields[0].primary);
+    assert!(user.fields[1].unique);
+
+    let api_error = contracts
+        .schemas
+        .enums
+        .iter()
+        .find(|schema| schema.name == "ApiError")
+        .expect("ApiError enum schema");
+    assert_eq!(api_error.variants.len(), 3);
+    assert_eq!(api_error.variants[0].name, "InvalidInput");
+    assert_eq!(api_error.variants[0].payload[0].name, "message");
 }
 
 fn request(method: Method, url: &str, body: &str) -> RuntimeRequest {

@@ -100,7 +100,7 @@ Status: complete for the HTTP MVP.
 Output:
 
 - `service` route registry: done for one-service MVP projects
-- checked HTTP contract manifest: done for service, routes, body, response, status, typed params, handlers, and error mapper
+- checked HTTP contract manifest: done for service, routes, body, response, status, typed params, handlers, local schemas, and error mapper
 - local server runner: done for `users_api`
 - request/response runtime types: done for the MVP HTTP boundary
 - JSON decode/encode MVP: done for local structs/models with primitive fields
@@ -133,6 +133,7 @@ Output:
 - `are fmt`: done for parsed MVP syntax
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
+- `are inspect` schema export: done for aliases, structs, models, enum variants, model collections, and primary/unique field metadata
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done

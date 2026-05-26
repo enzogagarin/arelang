@@ -418,6 +418,78 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
             route.method, contract, route.handler
         );
     }
+
+    if has_schemas(manifest) {
+        println!("schemas:");
+        for alias in &manifest.schemas.aliases {
+            let opacity = if alias.opaque { "opaque " } else { "" };
+            println!("  type {} = {}{}", alias.name, opacity, alias.aliased_type);
+        }
+        for schema in &manifest.schemas.structs {
+            println!(
+                "  struct {} {}",
+                schema.name,
+                brace_list(
+                    schema
+                        .fields
+                        .iter()
+                        .map(|field| format!("{}: {}", field.name, field.ty))
+                )
+            );
+        }
+        for schema in &manifest.schemas.models {
+            println!(
+                "  model {} collection {} {}",
+                schema.name,
+                schema.collection,
+                brace_list(schema.fields.iter().map(|field| {
+                    let mut label = format!("{}: {}", field.name, field.ty);
+                    if field.primary {
+                        label.push_str(" primary");
+                    }
+                    if field.unique {
+                        label.push_str(" unique");
+                    }
+                    label
+                }))
+            );
+        }
+        for schema in &manifest.schemas.enums {
+            println!(
+                "  enum {} {}",
+                schema.name,
+                brace_list(schema.variants.iter().map(|variant| {
+                    if variant.payload.is_empty() {
+                        return variant.name.clone();
+                    }
+
+                    let payload = variant
+                        .payload
+                        .iter()
+                        .map(|field| format!("{}: {}", field.name, field.ty))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}({payload})", variant.name)
+                }))
+            );
+        }
+    }
+}
+
+fn brace_list(parts: impl IntoIterator<Item = String>) -> String {
+    let parts = parts.into_iter().collect::<Vec<_>>();
+    if parts.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{ {} }}", parts.join(", "))
+    }
+}
+
+fn has_schemas(manifest: &HttpContractManifest) -> bool {
+    !manifest.schemas.aliases.is_empty()
+        || !manifest.schemas.structs.is_empty()
+        || !manifest.schemas.models.is_empty()
+        || !manifest.schemas.enums.is_empty()
 }
 
 fn run_audit(path: &Path, json: bool) -> ExitCode {

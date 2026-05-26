@@ -1,5 +1,10 @@
-use crate::RuntimeError;
-use are_ast::{Item, Module, RouteDecl, ServiceDecl, TypeExpr};
+use crate::{RuntimeError, schemas::type_expr_is_optional};
+use are_ast::{
+    EnumDecl, Field, Item, ModelDecl, ModelField, ModelFieldAttr, Module, RouteDecl, ServiceDecl,
+    StructDecl, TypeDecl, TypeExpr,
+};
+use are_project::CheckedFile;
+use are_semantics::collection_name_for_model;
 use serde::Serialize;
 use std::collections::HashMap;
 use tiny_http::Method;
@@ -8,6 +13,7 @@ use tiny_http::Method;
 pub struct HttpContractManifest {
     pub service: String,
     pub routes: Vec<HttpRouteContract>,
+    pub schemas: HttpSchemaManifest,
     pub error_mapper: Option<String>,
 }
 
@@ -26,6 +32,62 @@ pub struct HttpRouteContract {
 pub struct HttpPathParam {
     pub name: String,
     pub ty: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HttpSchemaManifest {
+    pub aliases: Vec<HttpAliasSchema>,
+    pub structs: Vec<HttpStructSchema>,
+    pub models: Vec<HttpModelSchema>,
+    pub enums: Vec<HttpEnumSchema>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpAliasSchema {
+    pub name: String,
+    pub aliased_type: String,
+    pub opaque: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpStructSchema {
+    pub name: String,
+    pub fields: Vec<HttpFieldSchema>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpModelSchema {
+    pub name: String,
+    pub collection: String,
+    pub fields: Vec<HttpModelFieldSchema>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpFieldSchema {
+    pub name: String,
+    pub ty: String,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpModelFieldSchema {
+    pub name: String,
+    pub ty: String,
+    pub optional: bool,
+    pub primary: bool,
+    pub unique: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpEnumSchema {
+    pub name: String,
+    pub variants: Vec<HttpEnumVariantSchema>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpEnumVariantSchema {
+    pub name: String,
+    pub payload: Vec<HttpFieldSchema>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,8 +122,18 @@ impl HttpContractManifest {
         Ok(Self {
             service: service.name.clone(),
             routes,
+            schemas: HttpSchemaManifest::default(),
             error_mapper,
         })
+    }
+
+    pub(crate) fn from_service_and_modules(
+        service: &ServiceDecl,
+        modules: &[CheckedFile],
+    ) -> Result<Self, RuntimeError> {
+        let mut manifest = Self::from_service(service)?;
+        manifest.schemas = HttpSchemaManifest::from_modules(modules);
+        Ok(manifest)
     }
 
     pub(crate) fn route_for(
@@ -104,6 +176,36 @@ impl HttpContractManifest {
                 handler: route.handler.clone(),
             })
             .collect()
+    }
+}
+
+impl HttpSchemaManifest {
+    fn from_modules(modules: &[CheckedFile]) -> Self {
+        let mut manifest = Self::default();
+
+        for item in modules.iter().flat_map(|file| file.module.items.iter()) {
+            match item {
+                Item::Type(decl) => manifest.aliases.push(alias_schema(decl)),
+                Item::Struct(decl) => manifest.structs.push(struct_schema(decl)),
+                Item::Model(decl) => manifest.models.push(model_schema(decl)),
+                Item::Enum(decl) => manifest.enums.push(enum_schema(decl)),
+                Item::Use(_) | Item::Function(_) | Item::Service(_) => {}
+            }
+        }
+
+        manifest
+            .aliases
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        manifest
+            .structs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        manifest
+            .models
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        manifest
+            .enums
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        manifest
     }
 }
 
@@ -209,6 +311,61 @@ fn runtime_error_mapper(service: &ServiceDecl) -> Option<String> {
 
         service_use.args.first().map(|path| path.segments.join("."))
     })
+}
+
+fn alias_schema(decl: &TypeDecl) -> HttpAliasSchema {
+    HttpAliasSchema {
+        name: decl.name.clone(),
+        aliased_type: type_expr_name(&decl.aliased),
+        opaque: decl.opaque,
+    }
+}
+
+fn struct_schema(decl: &StructDecl) -> HttpStructSchema {
+    HttpStructSchema {
+        name: decl.name.clone(),
+        fields: decl.fields.iter().map(field_schema).collect(),
+    }
+}
+
+fn model_schema(decl: &ModelDecl) -> HttpModelSchema {
+    HttpModelSchema {
+        name: decl.name.clone(),
+        collection: collection_name_for_model(&decl.name),
+        fields: decl.fields.iter().map(model_field_schema).collect(),
+    }
+}
+
+fn enum_schema(decl: &EnumDecl) -> HttpEnumSchema {
+    HttpEnumSchema {
+        name: decl.name.clone(),
+        variants: decl
+            .variants
+            .iter()
+            .map(|variant| HttpEnumVariantSchema {
+                name: variant.name.clone(),
+                payload: variant.payload.iter().map(field_schema).collect(),
+            })
+            .collect(),
+    }
+}
+
+fn field_schema(field: &Field) -> HttpFieldSchema {
+    HttpFieldSchema {
+        name: field.name.clone(),
+        ty: type_expr_name(&field.ty),
+        optional: type_expr_is_optional(&field.ty),
+    }
+}
+
+fn model_field_schema(field: &ModelField) -> HttpModelFieldSchema {
+    HttpModelFieldSchema {
+        name: field.name.clone(),
+        ty: type_expr_name(&field.ty),
+        optional: type_expr_is_optional(&field.ty),
+        primary: field.attrs.contains(&ModelFieldAttr::Primary),
+        unique: field.attrs.contains(&ModelFieldAttr::Unique),
+    }
 }
 
 fn method_matches(actual: &Method, expected: &str) -> bool {

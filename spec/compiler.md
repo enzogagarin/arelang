@@ -96,7 +96,7 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
-- build the checked HTTP contract manifest from the service declaration
+- build the checked HTTP contract manifest from the service declaration and local schema declarations
 - normalize incoming HTTP requests into the MVP runtime request type
 - wrap domain payload handler results using the route response/status contract
 - persist MVP model data through the model-backed in-memory store
@@ -115,7 +115,7 @@ Current `are inspect` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - build the checked HTTP contract manifest without opening a TCP listener
-- emit service, routes, body type, response type, status, typed path params, handler, and error mapper data in human or JSON form
+- emit service, routes, body type, response type, status, typed path params, handler, local schema, and error mapper data in human or JSON form
 
 Current `are audit` behavior:
 

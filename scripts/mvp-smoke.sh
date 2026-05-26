@@ -122,6 +122,10 @@ run "$ROOT_DIR/are" check "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" check "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/users_api" --json
+run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/users_api" --json >"$TMP_DIR/users_inspect.json"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"schemas"' "users inspect contract"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"collection": "users"' "users inspect contract"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"primary": true' "users inspect contract"
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" test "$ROOT_DIR/examples/hello_api" --json

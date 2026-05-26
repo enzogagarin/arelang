@@ -80,20 +80,40 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
         RuntimeError::UnsupportedProject("server target requires [server] config".into())
     })?;
     let address = format!("{}:{}", server_config.host, server_config.port);
-    let server = Server::http(&address)
-        .map_err(|err| RuntimeError::Server(format!("failed to bind {address}: {err}")))?;
+    let server = Server::http(&address).map_err(|err| {
+        RuntimeError::Server(format!(
+            "failed to start HTTP server at http://{address}\nreason: {err}\nhint: another process may already be using this address; stop it or change [server].port in are.toml"
+        ))
+    })?;
 
-    println!(
-        "Arelang HTTP MVP running {} v{} at http://{}",
-        manifest.package.name, manifest.package.version, address
-    );
-    println!("Routes:");
-    for route in &routes.routes {
-        println!("  {} {}", route.method, route.path);
-    }
+    print_run_summary(&manifest, service, &routes, &address);
 
     run_http_server(&server, &routes, &functions, &root, &manifest);
     Ok(())
+}
+
+fn print_run_summary(
+    manifest: &Manifest,
+    service: &ServiceDecl,
+    routes: &RuntimeRoutes,
+    address: &str,
+) {
+    println!("{} running at http://{}", service.name, address);
+    println!(
+        "package {} v{}",
+        manifest.package.name, manifest.package.version
+    );
+    println!("routes:");
+    for route in &routes.routes {
+        println!("{}", route_summary_line(route));
+    }
+}
+
+fn route_summary_line(route: &RuntimeRoute) -> String {
+    format!(
+        "  {:<6} {:<24} -> {}",
+        route.method, route.path, route.handler
+    )
 }
 
 fn run_http_server(
@@ -577,7 +597,7 @@ fn match_route(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
 mod tests {
     use super::{
         RuntimeFunctions, RuntimeRoutes, UsersApiState, find_single_service, match_route,
-        runtime_response,
+        route_summary_line, runtime_response,
     };
     use are_project::check_path;
     use std::path::Path;
@@ -587,6 +607,12 @@ mod tests {
     fn matches_named_route_params() {
         let params = match_route("/users/:id", "/users/42").expect("route matches");
         assert_eq!(params.get("id").expect("id"), "42");
+    }
+
+    #[test]
+    fn formats_route_summary_lines() {
+        let line = route_summary_line(&route("POST", "/users", "create_user"));
+        assert_eq!(line, "  POST   /users                   -> create_user");
     }
 
     #[test]

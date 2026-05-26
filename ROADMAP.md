@@ -111,7 +111,9 @@ Output:
 - `are test`
 - `are check --json`
 - diagnostic fix suggestions
-- users API tests
+- users API tests: started
+- generated users API template: done
+- MVP smoke script in CI: done
 
 Definition of done:
 

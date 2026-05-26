@@ -76,6 +76,40 @@ start_server() {
     PIDS+=("$!")
 }
 
+assert_users_api_flow() {
+    local base_url="$1"
+    local label="$2"
+
+    curl -fsS "$base_url/health" >"$TMP_DIR/${label}_health.json"
+    assert_file_contains "$TMP_DIR/${label}_health.json" '"status":"ok"' "$label health response"
+
+    local invalid_status
+    invalid_status="$(
+        curl -sS -o "$TMP_DIR/${label}_invalid_email.json" -w '%{http_code}' \
+            -X POST "$base_url/users" \
+            -H 'content-type: application/json' \
+            -d '{"email":"invalid","name":"Ada"}'
+    )"
+    assert_eq "$invalid_status" "400" "$label invalid email HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_invalid_email.json" '"error":"invalid_email"' "$label invalid email response"
+
+    local created_status
+    created_status="$(
+        curl -sS -o "$TMP_DIR/${label}_created_user.json" -w '%{http_code}' \
+            -X POST "$base_url/users" \
+            -H 'content-type: application/json' \
+            -d '{"email":"ada@example.com","name":"Ada Lovelace"}'
+    )"
+    assert_eq "$created_status" "201" "$label create user HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_created_user.json" '"id":1' "$label create user response"
+    assert_file_contains "$TMP_DIR/${label}_created_user.json" '"email":"ada@example.com"' "$label create user response"
+
+    local get_status
+    get_status="$(curl -sS -o "$TMP_DIR/${label}_get_user.json" -w '%{http_code}' "$base_url/users/1")"
+    assert_eq "$get_status" "200" "$label get user HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_get_user.json" '"name":"Ada Lovelace"' "$label get user response"
+}
+
 log "format, tests, and lints"
 run cargo fmt --all -- --check
 run cargo test --workspace
@@ -95,6 +129,15 @@ wait_for_http "http://127.0.0.1:18092/ping" "$generated_log"
 curl -fsS "http://127.0.0.1:18092/ping" >"$TMP_DIR/generated_ping.json"
 assert_file_contains "$TMP_DIR/generated_ping.json" '"message":"pong"' "generated ping response"
 
+log "generated users template smoke"
+GENERATED_USERS="$TMP_DIR/generated_users_api"
+run "$ROOT_DIR/are" new "$GENERATED_USERS" --name generated-users-api --template users --port 18094
+run "$ROOT_DIR/are" check "$GENERATED_USERS" --json
+start_server generated_users "$GENERATED_USERS"
+generated_users_log="$LAST_LOG_FILE"
+wait_for_http "http://127.0.0.1:18094/health" "$generated_users_log"
+assert_users_api_flow "http://127.0.0.1:18094" "generated_users"
+
 log "users API HTTP smoke"
 USERS_API="$TMP_DIR/users_api"
 cp -R "$ROOT_DIR/examples/users_api" "$USERS_API"
@@ -105,31 +148,6 @@ mv "$USERS_API/are.toml.tmp" "$USERS_API/are.toml"
 start_server users "$USERS_API"
 users_log="$LAST_LOG_FILE"
 wait_for_http "http://127.0.0.1:18093/health" "$users_log"
-
-curl -fsS "http://127.0.0.1:18093/health" >"$TMP_DIR/health.json"
-assert_file_contains "$TMP_DIR/health.json" '"status":"ok"' "health response"
-
-invalid_status="$(
-    curl -sS -o "$TMP_DIR/invalid_email.json" -w '%{http_code}' \
-        -X POST "http://127.0.0.1:18093/users" \
-        -H 'content-type: application/json' \
-        -d '{"email":"invalid","name":"Ada"}'
-)"
-assert_eq "$invalid_status" "400" "invalid email HTTP status"
-assert_file_contains "$TMP_DIR/invalid_email.json" '"error":"invalid_email"' "invalid email response"
-
-created_status="$(
-    curl -sS -o "$TMP_DIR/created_user.json" -w '%{http_code}' \
-        -X POST "http://127.0.0.1:18093/users" \
-        -H 'content-type: application/json' \
-        -d '{"email":"ada@example.com","name":"Ada Lovelace"}'
-)"
-assert_eq "$created_status" "201" "create user HTTP status"
-assert_file_contains "$TMP_DIR/created_user.json" '"id":1' "create user response"
-assert_file_contains "$TMP_DIR/created_user.json" '"email":"ada@example.com"' "create user response"
-
-get_status="$(curl -sS -o "$TMP_DIR/get_user.json" -w '%{http_code}' "http://127.0.0.1:18093/users/1")"
-assert_eq "$get_status" "200" "get user HTTP status"
-assert_file_contains "$TMP_DIR/get_user.json" '"name":"Ada Lovelace"' "get user response"
+assert_users_api_flow "http://127.0.0.1:18093" "example_users"
 
 log "MVP smoke passed"

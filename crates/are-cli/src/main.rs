@@ -1,7 +1,7 @@
 use are_diagnostics::Diagnostic;
 use are_http_runtime::run_project;
 use are_project::check_path;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +33,10 @@ enum Command {
         /// Port for the generated HTTP server.
         #[arg(long, default_value_t = 8080)]
         port: u16,
+
+        /// Starter project shape.
+        #[arg(long, value_enum, default_value = "minimal")]
+        template: ProjectTemplate,
     },
 
     /// Run static checks without starting a server or producing code.
@@ -61,6 +65,30 @@ enum Command {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ProjectTemplate {
+    /// Minimal GET /ping HTTP service.
+    Minimal,
+    /// Backend-first users API with validation and typed errors.
+    Users,
+}
+
+impl ProjectTemplate {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Users => "users",
+        }
+    }
+
+    fn source(self, service_name: &str) -> String {
+        match self {
+            Self::Minimal => minimal_source(service_name),
+            Self::Users => users_source(service_name),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct CheckReport {
     ok: bool,
@@ -77,7 +105,8 @@ fn main() -> ExitCode {
             name,
             host,
             port,
-        } => match create_project(&path, name.as_deref(), &host, port) {
+            template,
+        } => match create_project(&path, name.as_deref(), &host, port, template) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 eprintln!("{err}");
@@ -105,6 +134,7 @@ fn create_project(
     requested_name: Option<&str>,
     host: &str,
     port: u16,
+    template: ProjectTemplate,
 ) -> Result<(), String> {
     if path.exists() && path.read_dir().map_err(io_error(path))?.next().is_some() {
         return Err(format!(
@@ -118,15 +148,27 @@ fn create_project(
     fs::create_dir_all(path).map_err(io_error(path))?;
 
     let manifest = project_manifest(&package_name, host, port);
-    let source = main_source(&service_name);
+    let source = template.source(&service_name);
 
     fs::write(path.join("are.toml"), manifest).map_err(io_error(&path.join("are.toml")))?;
     fs::write(path.join("main.are"), source).map_err(io_error(&path.join("main.are")))?;
 
-    println!("created {}", path.display());
+    println!("created {} ({})", path.display(), template.label());
     println!("next:");
     println!("  ./are check {}", path.display());
     println!("  ./are run {}", path.display());
+    match template {
+        ProjectTemplate::Minimal => {
+            println!("  curl http://{host}:{port}/ping");
+        }
+        ProjectTemplate::Users => {
+            println!("  curl http://{host}:{port}/health");
+            println!(
+                "  curl -X POST http://{host}:{port}/users -H 'content-type: application/json' -d '{{\"email\":\"ada@example.com\",\"name\":\"Ada Lovelace\"}}'"
+            );
+            println!("  curl http://{host}:{port}/users/1");
+        }
+    }
     Ok(())
 }
 
@@ -193,7 +235,7 @@ process_spawn = false
     )
 }
 
-fn main_source(service_name: &str) -> String {
+fn minimal_source(service_name: &str) -> String {
     format!(
         r#"use std.http as Http
 
@@ -205,6 +247,74 @@ fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
 
 service {service_name}(state: AppState) {{
     route GET "/ping" -> ping
+}}
+"#
+    )
+}
+
+fn users_source(service_name: &str) -> String {
+    format!(
+        r#"use std.http as Http
+use std.validate
+
+type UserId = opaque U64
+type Email = opaque String
+
+struct AppState {{}}
+
+struct CreateUserInput {{
+    email: String
+    name: String
+}}
+
+model User {{
+    id: UserId primary
+    email: Email unique
+    name: String
+}}
+
+enum ApiError {{
+    InvalidInput(message: String)
+    NotFound
+    Internal(message: String)
+}}
+
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
+    return Http.Response.ok({{ "status": "ok" }})
+}}
+
+fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {{
+    ensure validate.email(input.email), ApiError.InvalidInput("invalid_email")
+    ensure validate.length(input.name, min: 2, max: 80), ApiError.InvalidInput("invalid_name")
+    return input
+}}
+
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {{
+    let input = validate_user(req.json<CreateUserInput>()?)?
+    let user = ctx.db.users.insert(input)?
+    return Http.Response.created(user)
+}}
+
+fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {{
+    let id = ctx.param<UserId>("id")?
+    let user = ctx.db.users.get(id)?
+    return Http.Response.ok(user)
+}}
+
+fn map_error(err: ApiError) -> Http.Response {{
+    match err {{
+        InvalidInput(message) => return Http.Response.error(400, {{ "error": message }})
+        NotFound => return Http.Response.error(404, {{ "error": "not_found" }})
+        Internal(message) => return Http.Response.error(500, {{ "error": message }})
+    }}
+}}
+
+service {service_name}(state: AppState) {{
+    use Http.error_map(map_error)
+
+    route GET "/health" -> health
+    route POST "/users" -> create_user
+    route GET "/users/:id" -> get_user
 }}
 "#
     )
@@ -278,7 +388,8 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        kebab_case, main_source, package_name_from_path, pascal_case, service_name_from_package,
+        kebab_case, minimal_source, package_name_from_path, pascal_case, service_name_from_package,
+        users_source,
     };
     use std::path::Path;
 
@@ -293,9 +404,19 @@ mod tests {
 
     #[test]
     fn renders_minimal_http_source() {
-        let source = main_source("HelloApi");
+        let source = minimal_source("HelloApi");
         assert!(source.contains("fn ping"));
         assert!(source.contains("service HelloApi"));
         assert!(source.contains(r#"route GET "/ping" -> ping"#));
+    }
+
+    #[test]
+    fn renders_users_http_source() {
+        let source = users_source("GeneratedUsersApi");
+        assert!(source.contains("model User"));
+        assert!(source.contains("fn create_user"));
+        assert!(source.contains("service GeneratedUsersApi"));
+        assert!(source.contains("use Http.error_map(map_error)"));
+        assert!(source.contains(r#"route POST "/users" -> create_user"#));
     }
 }

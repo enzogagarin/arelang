@@ -47,6 +47,7 @@ From the repository root, the current demos are intentionally a small set of com
 
 ```sh
 ./are new scratch_api --port 8090
+./are new scratch_users --template users --port 8091
 ./are check scratch_api
 ./are run scratch_api
 ./are check examples/hello_api
@@ -71,9 +72,16 @@ are check examples/hello_api
 are run examples/hello_api
 ```
 
-`are new` creates a minimal HTTP server project with an `are.toml` manifest and a `main.are` file. The generated project starts with a single `GET /ping` route.
+`are new` creates an HTTP server project with an `are.toml` manifest and a `main.are` file. The default template starts with a single `GET /ping` route. The backend-first users template creates the fuller MVP shape:
 
-`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, tests, clippy, static checks for the bundled examples, creates a fresh generated API, starts real HTTP servers on high local ports, and verifies responses with `curl`.
+```sh
+./are new users_api --template users
+./are run users_api
+```
+
+When a server starts, `are run` prints the service name, package, listen URL, and route table so the project is immediately curlable.
+
+`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, tests, clippy, static checks for the bundled examples, creates fresh minimal and users-template APIs, starts real HTTP servers on high local ports, and verifies responses with `curl`.
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
 

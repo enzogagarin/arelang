@@ -23,8 +23,9 @@ Current implementation status:
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations
-- function bodies are not interpreted yet
-- users API behavior is implemented by a temporary runtime adapter
+- route handlers execute through the MVP Arelang function-body interpreter
+- `are new --template users` creates a runnable backend-first users API project
+- `are run` prints the service URL and route table before accepting requests
 
 ## Handler Shape
 

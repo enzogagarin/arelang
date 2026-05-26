@@ -420,6 +420,7 @@ impl<'a> Parser<'a> {
     fn can_start_statement(&self) -> bool {
         self.check_keyword(Keyword::Let)
             || self.check_keyword(Keyword::Return)
+            || self.check_keyword(Keyword::Ensure)
             || self.check_keyword(Keyword::Match)
             || self.check_kind(&TokenKind::Identifier)
     }
@@ -451,6 +452,10 @@ impl<'a> Parser<'a> {
 
         if self.check_keyword(Keyword::Return) {
             return self.parse_return_statement();
+        }
+
+        if self.check_keyword(Keyword::Ensure) {
+            return self.parse_ensure_statement();
         }
 
         if self.check_keyword(Keyword::Match) {
@@ -489,6 +494,23 @@ impl<'a> Parser<'a> {
         Some(Stmt::Return {
             value,
             range: SourceRange::new(return_start, stmt_end),
+        })
+    }
+
+    fn parse_ensure_statement(&mut self) -> Option<Stmt> {
+        let start = self
+            .match_keyword(Keyword::Ensure)
+            .expect("ensure statement starts with ensure")
+            .start;
+        let condition = self.parse_expr()?;
+        self.expect_kind(&TokenKind::Comma, "expected `,` after ensure condition")?;
+        let error = self.parse_expr()?;
+        let end = error.range().end;
+
+        Some(Stmt::Ensure {
+            condition,
+            error,
+            range: SourceRange::new(start, end),
         })
     }
 
@@ -593,6 +615,14 @@ impl<'a> Parser<'a> {
 
             return Some(Expr::Integer {
                 value,
+                range: token.range,
+            });
+        }
+
+        if self.check_keyword(Keyword::True) || self.check_keyword(Keyword::False) {
+            let token = self.advance();
+            return Some(Expr::Bool {
+                value: token.lexeme == "true",
                 range: token.range,
             });
         }
@@ -959,6 +989,26 @@ mod tests {
             panic!("health should return a response");
         };
         assert!(matches!(value, Expr::Call { .. }));
+
+        let validate_user = module
+            .items
+            .iter()
+            .find_map(|item| {
+                if let Item::Function(function) = item {
+                    (function.name == "validate_user").then_some(function)
+                } else {
+                    None
+                }
+            })
+            .expect("validate_user function");
+        let FunctionBody::Parsed { block } = &validate_user.body else {
+            panic!("validate_user body should parse into statements");
+        };
+        assert_eq!(block.statements.len(), 3);
+        assert!(matches!(
+            block.statements.first(),
+            Some(Stmt::Ensure { .. })
+        ));
 
         let create_user = module
             .items

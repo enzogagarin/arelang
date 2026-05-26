@@ -326,6 +326,7 @@ fn interpreted_response(
             body: response.body,
         },
         Ok(InterpretedValue::Json(_)) => error_response(500, "handler_returned_json"),
+        Ok(InterpretedValue::Bool(_)) => error_response(500, "handler_returned_bool"),
         Ok(InterpretedValue::Enum(_)) => error_response(500, "handler_returned_enum"),
         Ok(InterpretedValue::Unit) => error_response(500, "handler_returned_unit"),
         Err(err) => {
@@ -376,6 +377,7 @@ fn mapped_error_response(
             body: response.body,
         },
         Ok(InterpretedValue::Json(_)) => error_response(500, "mapper_returned_json"),
+        Ok(InterpretedValue::Bool(_)) => error_response(500, "mapper_returned_bool"),
         Ok(InterpretedValue::Enum(_)) => error_response(500, "mapper_returned_enum"),
         Ok(InterpretedValue::Unit) => error_response(500, "mapper_returned_unit"),
         Err(err) => {
@@ -406,16 +408,12 @@ impl Host for UsersApiHost<'_> {
         Ok(value)
     }
 
-    fn validate_email(&mut self, value: &serde_json::Value) -> Result<(), InterpretError> {
+    fn validate_email(&mut self, value: &serde_json::Value) -> Result<bool, InterpretError> {
         let Some(email) = value.as_str() else {
-            return Err(api_invalid_input("invalid_email"));
+            return Ok(false);
         };
 
-        if email.contains('@') {
-            return Ok(());
-        }
-
-        Err(api_invalid_input("invalid_email"))
+        Ok(email.contains('@'))
     }
 
     fn validate_length(
@@ -423,19 +421,15 @@ impl Host for UsersApiHost<'_> {
         value: &serde_json::Value,
         min: i64,
         max: i64,
-    ) -> Result<(), InterpretError> {
+    ) -> Result<bool, InterpretError> {
         let Some(text) = value.as_str() else {
-            return Err(api_invalid_input("invalid_name"));
+            return Ok(false);
         };
 
         let len = i64::try_from(text.chars().count()).map_err(|_| {
             InterpretError::UnsupportedExpression("validate.length input is too large".into())
         })?;
-        if (min..=max).contains(&len) {
-            return Ok(());
-        }
-
-        Err(api_invalid_input("invalid_name"))
+        Ok((min..=max).contains(&len))
     }
 
     fn insert_user(

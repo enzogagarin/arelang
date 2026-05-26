@@ -32,8 +32,8 @@ fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
 }
 
 fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {
-    validate.email(input.email)?
-    validate.length(input.name, min: 2, max: 80)?
+    ensure validate.email(input.email), ApiError.InvalidInput("invalid_email")
+    ensure validate.length(input.name, min: 2, max: 80), ApiError.InvalidInput("invalid_name")
     return input
 }
 

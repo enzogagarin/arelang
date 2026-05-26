@@ -609,6 +609,7 @@ impl<'a> TypeChecker<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BodyType {
     Unit,
+    Bool,
     String,
     Integer,
     Object,
@@ -641,6 +642,7 @@ impl BodyType {
     fn display(&self) -> String {
         match self {
             Self::Unit => "Unit".to_string(),
+            Self::Bool => "Bool".to_string(),
             Self::String => "String".to_string(),
             Self::Integer => "Integer".to_string(),
             Self::Object => "Object".to_string(),
@@ -695,10 +697,48 @@ impl BodyChecker<'_> {
                 let value_type = self.check_expr(value);
                 self.check_return_type(&value_type, *range, function_name);
             }
+            Stmt::Ensure {
+                condition,
+                error,
+                range,
+            } => {
+                self.check_ensure_statement(condition, error, *range);
+            }
             Stmt::Match { value, arms, range } => {
                 self.check_match_statement(value, arms, *range, function_name);
             }
         }
+    }
+
+    fn check_ensure_statement(&mut self, condition: &Expr, error: &Expr, range: SourceRange) {
+        let condition_type = self.check_expr(condition);
+        self.expect_exact_type(
+            &condition_type,
+            &BodyType::Bool,
+            condition.range(),
+            "`ensure` expects a boolean condition",
+        );
+
+        let error_type = self.check_expr(error);
+        let Some(expected_error) = self.result_error.clone() else {
+            self.error(
+                "E_BODY_0017",
+                range,
+                "`ensure` requires the function to return Result<_, E>",
+                "ensure raises an error value when its condition is false",
+            );
+            return;
+        };
+
+        self.expect_exact_type(
+            &error_type,
+            &expected_error,
+            error.range(),
+            format!(
+                "`ensure` must raise `{}` in this function",
+                expected_error.display()
+            ),
+        );
     }
 
     fn check_match_statement(
@@ -803,6 +843,7 @@ impl BodyChecker<'_> {
         match expr {
             Expr::String { .. } => BodyType::String,
             Expr::Integer { .. } => BodyType::Integer,
+            Expr::Bool { .. } => BodyType::Bool,
             Expr::Object { fields, .. } => {
                 for field in fields {
                     self.check_expr(&field.value);
@@ -821,6 +862,10 @@ impl BodyChecker<'_> {
     }
 
     fn check_path(&mut self, path: &Path) -> BodyType {
+        if let Some(enum_name) = self.check_empty_enum_variant_path(path) {
+            return enum_name;
+        }
+
         let Some(first) = path.segments.first() else {
             return BodyType::Unknown;
         };
@@ -892,6 +937,10 @@ impl BodyChecker<'_> {
             return self.check_builtin_call(builtin, &callee_name, type_args, args, range);
         }
 
+        if let Some(enum_value) = self.check_enum_constructor(callee, type_args, args, range) {
+            return enum_value;
+        }
+
         if callee.segments.len() == 1
             && let Some(function) = self.functions.get(&callee.segments[0]).copied()
         {
@@ -957,7 +1006,7 @@ impl BodyChecker<'_> {
                     range,
                     "validate.email expects a string value",
                 );
-                self.result_type(BodyType::Unit)
+                BodyType::Bool
             }
             Builtin::ValidateLength => {
                 let value_type = self.expect_positional_arg(callee_name, args, 0, 1, range);
@@ -968,7 +1017,7 @@ impl BodyChecker<'_> {
                 );
                 self.expect_named_integer(callee_name, args, "min", range);
                 self.expect_named_integer(callee_name, args, "max", range);
-                self.result_type(BodyType::Unit)
+                BodyType::Bool
             }
             Builtin::ContextParam => {
                 let name_type = self.expect_single_arg(callee_name, args, range);
@@ -987,6 +1036,94 @@ impl BodyChecker<'_> {
                 self.result_type(self.named_or_unknown("User"))
             }
         }
+    }
+
+    fn check_enum_constructor(
+        &mut self,
+        callee: &Path,
+        type_args: &[TypeExpr],
+        args: &[CallArg],
+        range: SourceRange,
+    ) -> Option<BodyType> {
+        let [enum_name, variant_name] = callee.segments.as_slice() else {
+            return None;
+        };
+
+        let variant = self.enum_variant(enum_name, variant_name)?;
+        if !type_args.is_empty() {
+            self.error(
+                "E_BODY_0014",
+                range,
+                format!(
+                    "`{}` does not accept type argument(s), got {}",
+                    path_name(callee),
+                    type_args.len()
+                ),
+                "enum constructors use their declared payload types",
+            );
+        }
+
+        for arg in args.iter().filter(|arg| arg.label.is_some()) {
+            self.error(
+                "E_BODY_0015",
+                arg.range,
+                format!("`{}` does not accept named arguments", path_name(callee)),
+                "enum constructor payloads currently use positional arguments",
+            );
+        }
+
+        let positional = args
+            .iter()
+            .filter(|arg| arg.label.is_none())
+            .collect::<Vec<_>>();
+        if positional.len() != variant.payload.len() {
+            self.error(
+                "E_BODY_0004",
+                range,
+                format!(
+                    "`{}` expects {} payload value(s), got {}",
+                    path_name(callee),
+                    variant.payload.len(),
+                    positional.len()
+                ),
+                "enum constructor calls must match the variant payload",
+            );
+        }
+
+        for (arg, (_field_name, expected)) in positional.iter().zip(&variant.payload) {
+            let actual = self.check_expr(&arg.value);
+            self.expect_exact_type(
+                &actual,
+                expected,
+                arg.range,
+                format!(
+                    "`{}` payload expects `{}`",
+                    path_name(callee),
+                    expected.display()
+                ),
+            );
+        }
+
+        Some(BodyType::Named(enum_name.clone()))
+    }
+
+    fn check_empty_enum_variant_path(&mut self, path: &Path) -> Option<BodyType> {
+        let [enum_name, variant_name] = path.segments.as_slice() else {
+            return None;
+        };
+
+        let variant = self.enum_variant(enum_name, variant_name)?;
+        if !variant.payload.is_empty() {
+            self.error(
+                "E_BODY_0018",
+                path.range,
+                format!("`{}` requires payload values", path_name(path)),
+                "call the enum constructor with payload values",
+            );
+            return Some(BodyType::Named(enum_name.clone()));
+        }
+
+        Some(BodyType::Named(enum_name.clone()))
     }
 
     fn check_user_function_call(
@@ -1077,6 +1214,12 @@ impl BodyChecker<'_> {
                 })
                 .collect(),
         )
+    }
+
+    fn enum_variant(&self, enum_name: &str, variant_name: &str) -> Option<EnumVariantShape> {
+        self.enum_variants(enum_name)?
+            .into_iter()
+            .find(|variant| variant.name == variant_name)
     }
 
     fn bind_pattern_payload(
@@ -1485,6 +1628,10 @@ fn body_type_from_type_expr(ty: &TypeExpr, http_aliases: &HashSet<String>) -> Bo
                 return BodyType::String;
             }
 
+            if path_is(path, &["Bool"]) {
+                return BodyType::Bool;
+            }
+
             BodyType::Named(path_name(path))
         }
         TypeExpr::Generic { base, args, .. } => {
@@ -1574,6 +1721,7 @@ fn same_body_type(left: &BodyType, right: &BodyType) -> bool {
 
     match (left, right) {
         (BodyType::Unit, BodyType::Unit)
+        | (BodyType::Bool, BodyType::Bool)
         | (BodyType::String, BodyType::String)
         | (BodyType::Integer, BodyType::Integer)
         | (BodyType::Object, BodyType::Object)
@@ -1769,7 +1917,7 @@ mod tests {
 
             fn create(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
                 let input = req.json<CreateUserInput>()?
-                validate.email(input.missing)?
+                ensure validate.email(input.missing), ApiError.Failed
                 return Http.Response.created(input)
             }
 
@@ -1820,7 +1968,7 @@ mod tests {
 
             fn create(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
                 let input = req.json<CreateUserInput>()?
-                validate.length(input.name, min: "two", max: 80)?
+                ensure validate.length(input.name, min: "two", max: 80), ApiError.Failed
                 return Http.Response.ok(input)
             }
 
@@ -1877,6 +2025,40 @@ mod tests {
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
         assert_eq!(diagnostics[0].code, "E_BODY_0011");
+    }
+
+    #[test]
+    fn rejects_ensure_with_non_bool_condition() {
+        let source = r#"
+            enum ApiError { Failed }
+
+            fn validate() -> Result<String, ApiError> {
+                ensure "yes", ApiError.Failed
+                return "ok"
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_BODY_0006");
+    }
+
+    #[test]
+    fn rejects_invalid_enum_constructor_payloads() {
+        let source = r#"
+            enum ApiError {
+                InvalidInput(message: String)
+            }
+
+            fn validate() -> Result<String, ApiError> {
+                ensure false, ApiError.InvalidInput(400)
+                return "ok"
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_BODY_0006");
     }
 
     fn diagnostics_for(file_name: &str, source: &str) -> Vec<are_diagnostics::Diagnostic> {

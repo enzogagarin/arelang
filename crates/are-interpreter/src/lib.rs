@@ -7,6 +7,7 @@ use std::hash::BuildHasher;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Json(JsonValue),
+    Bool(bool),
     HttpResponse(HttpResponseValue),
     Enum(EnumValue),
     Unit,
@@ -47,6 +48,9 @@ pub enum InterpretError {
         context: String,
     },
     ExpectedInteger {
+        context: String,
+    },
+    ExpectedBool {
         context: String,
     },
     ExpectedEnum {
@@ -91,6 +95,7 @@ impl std::fmt::Display for InterpretError {
             Self::ExpectedInteger { context } => {
                 write!(f, "`{context}` expected an integer value")
             }
+            Self::ExpectedBool { context } => write!(f, "`{context}` expected a boolean value"),
             Self::ExpectedEnum { context } => write!(f, "`{context}` expected an enum value"),
             Self::UnmatchedPattern { variant } => {
                 write!(f, "no match arm handled variant `{variant}`")
@@ -151,24 +156,24 @@ pub trait Host {
     /// request body available.
     fn read_json_body(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
 
-    /// Validate an email-like JSON string.
+    /// Check whether a JSON string is email-like.
     ///
     /// # Errors
     ///
-    /// Returns an error when the value is not accepted by the host validator.
-    fn validate_email(&mut self, value: &JsonValue) -> Result<(), InterpretError>;
+    /// Returns an error when the host validator itself cannot run.
+    fn validate_email(&mut self, value: &JsonValue) -> Result<bool, InterpretError>;
 
-    /// Validate the character length of a JSON string.
+    /// Check whether a JSON string length is within bounds.
     ///
     /// # Errors
     ///
-    /// Returns an error when the value is not accepted by the host validator.
+    /// Returns an error when the host validator itself cannot run.
     fn validate_length(
         &mut self,
         value: &JsonValue,
         min: i64,
         max: i64,
-    ) -> Result<(), InterpretError>;
+    ) -> Result<bool, InterpretError>;
 
     /// Insert a user-like JSON value into host state.
     ///
@@ -322,8 +327,25 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                 Ok(None)
             }
             Stmt::Return { value, .. } => self.eval_expr(value).map(Some),
+            Stmt::Ensure {
+                condition, error, ..
+            } => self.exec_ensure(condition, error),
             Stmt::Match { value, arms, .. } => self.exec_match(value, arms),
         }
+    }
+
+    fn exec_ensure(
+        &mut self,
+        condition: &Expr,
+        error: &Expr,
+    ) -> Result<Option<Value>, InterpretError> {
+        let condition = self.eval_expr(condition)?;
+        if expect_bool(&condition, "ensure")? {
+            return Ok(None);
+        }
+
+        let error = expect_enum(self.eval_expr(error)?, "ensure")?;
+        Err(InterpretError::RaisedError(error))
     }
 
     fn exec_match(
@@ -357,6 +379,7 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
         match expr {
             Expr::String { value, .. } => Ok(Value::Json(JsonValue::String(value.clone()))),
             Expr::Integer { value, .. } => Ok(Value::Json((*value).into())),
+            Expr::Bool { value, .. } => Ok(Value::Bool(*value)),
             Expr::Object { fields, .. } => {
                 let mut object = Map::new();
                 for field in fields {
@@ -372,13 +395,17 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
                 type_args,
                 args,
                 ..
-            } => self.eval_call(&callee.segments.join("."), type_args, args),
+            } => self.eval_call(callee, type_args, args),
             Expr::Try { value, .. } => self.eval_expr(value),
             Expr::Path { path } => self.eval_path(path),
         }
     }
 
     fn eval_path(&self, path: &Path) -> Result<Value, InterpretError> {
+        if let Some(value) = enum_value_from_path(path) {
+            return Ok(value);
+        }
+
         let Some(first) = path.segments.first() else {
             return Err(InterpretError::UnsupportedExpression(String::new()));
         };
@@ -409,64 +436,99 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
 
     fn eval_call(
         &mut self,
-        callee: &str,
+        callee: &Path,
         type_args: &[TypeExpr],
         args: &[CallArg],
     ) -> Result<Value, InterpretError> {
-        match builtin_by_callee(callee) {
+        let callee_name = callee.segments.join(".");
+
+        match builtin_by_callee(&callee_name) {
             Some(Builtin::HttpResponseOk) => {
-                let body = self.single_json_arg(callee, args)?;
+                let body = self.single_json_arg(&callee_name, args)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status: 200, body }))
             }
             Some(Builtin::HttpResponseCreated) => {
-                let body = self.single_json_arg(callee, args)?;
+                let body = self.single_json_arg(&callee_name, args)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status: 201, body }))
             }
             Some(Builtin::HttpResponseError) => {
-                let status = self.positional_i64_arg(callee, args, 0, 2)?;
+                let status = self.positional_i64_arg(&callee_name, args, 0, 2)?;
                 let status =
                     u16::try_from(status).map_err(|_| InterpretError::ExpectedInteger {
-                        context: callee.to_string(),
+                        context: callee_name.clone(),
                     })?;
-                let body = self.positional_json_arg(callee, args, 1, 2)?;
+                let body = self.positional_json_arg(&callee_name, args, 1, 2)?;
                 Ok(Value::HttpResponse(HttpResponseValue { status, body }))
             }
             Some(Builtin::RequestJson) => {
-                Self::expect_arity(callee, args, 0)?;
+                Self::expect_arity(&callee_name, args, 0)?;
                 let type_name = type_args.first().and_then(type_expr_name);
                 self.host
                     .read_json_body(type_name.as_deref())
                     .map(Value::Json)
             }
             Some(Builtin::ValidateEmail) => {
-                let value = self.single_json_arg(callee, args)?;
-                self.host.validate_email(&value)?;
-                Ok(Value::Unit)
+                let value = self.single_json_arg(&callee_name, args)?;
+                self.host.validate_email(&value).map(Value::Bool)
             }
             Some(Builtin::ValidateLength) => {
-                let value = self.positional_json_arg(callee, args, 0, 1)?;
-                let min = self.named_i64_arg(callee, args, "min")?;
-                let max = self.named_i64_arg(callee, args, "max")?;
-                self.host.validate_length(&value, min, max)?;
-                Ok(Value::Unit)
+                let value = self.positional_json_arg(&callee_name, args, 0, 1)?;
+                let min = self.named_i64_arg(&callee_name, args, "min")?;
+                let max = self.named_i64_arg(&callee_name, args, "max")?;
+                self.host.validate_length(&value, min, max).map(Value::Bool)
             }
             Some(Builtin::StateUsersInsert) => {
-                let input = self.single_json_arg(callee, args)?;
+                let input = self.single_json_arg(&callee_name, args)?;
                 self.host.insert_user(input).map(Value::Json)
             }
             Some(Builtin::ContextParam) => {
-                let name = self.single_string_arg(callee, args)?;
+                let name = self.single_string_arg(&callee_name, args)?;
                 let type_name = type_args.first().and_then(type_expr_name);
                 self.host
                     .read_path_param(type_name.as_deref(), &name)
                     .map(Value::Json)
             }
             Some(Builtin::StateUsersGet) => {
-                let id = self.single_json_arg(callee, args)?;
+                let id = self.single_json_arg(&callee_name, args)?;
                 self.host.get_user(id).map(Value::Json)
             }
-            None => self.eval_user_function_call(callee, args),
+            None => {
+                if let Some(value) = self.eval_enum_constructor(callee, args)? {
+                    return Ok(value);
+                }
+
+                self.eval_user_function_call(&callee_name, args)
+            }
         }
+    }
+
+    fn eval_enum_constructor(
+        &mut self,
+        callee: &Path,
+        args: &[CallArg],
+    ) -> Result<Option<Value>, InterpretError> {
+        let [enum_name, variant] = callee.segments.as_slice() else {
+            return Ok(None);
+        };
+
+        if let Some(arg) = args.iter().find(|arg| arg.label.is_some()) {
+            return Err(InterpretError::UnsupportedExpression(format!(
+                "{}:{}",
+                callee.segments.join("."),
+                arg.label.as_deref().unwrap_or_default()
+            )));
+        }
+
+        let payload = args
+            .iter()
+            .map(|arg| self.eval_expr(&arg.value))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Some(Value::Enum(EnumValue {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+            payload,
+        })))
     }
 
     fn eval_user_function_call(
@@ -639,7 +701,7 @@ impl Host for NoopHost {
         Err(InterpretError::UnsupportedExpression("req.json".into()))
     }
 
-    fn validate_email(&mut self, _value: &JsonValue) -> Result<(), InterpretError> {
+    fn validate_email(&mut self, _value: &JsonValue) -> Result<bool, InterpretError> {
         Err(InterpretError::UnsupportedExpression(
             "validate.email".into(),
         ))
@@ -650,7 +712,7 @@ impl Host for NoopHost {
         _value: &JsonValue,
         _min: i64,
         _max: i64,
-    ) -> Result<(), InterpretError> {
+    ) -> Result<bool, InterpretError> {
         Err(InterpretError::UnsupportedExpression(
             "validate.length".into(),
         ))
@@ -685,11 +747,54 @@ fn type_expr_name(ty: &TypeExpr) -> Option<String> {
     }
 }
 
+fn enum_value_from_path(path: &Path) -> Option<Value> {
+    let [enum_name, variant] = path.segments.as_slice() else {
+        return None;
+    };
+
+    if !enum_name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+    {
+        return None;
+    }
+
+    Some(Value::Enum(EnumValue {
+        enum_name: enum_name.clone(),
+        variant: variant.clone(),
+        payload: Vec::new(),
+    }))
+}
+
 fn expect_json(value: Value, context: &str) -> Result<JsonValue, InterpretError> {
     match value {
         Value::Json(value) => Ok(value),
+        Value::Bool(value) => Ok(JsonValue::Bool(value)),
         Value::HttpResponse(_) | Value::Enum(_) | Value::Unit => {
             Err(InterpretError::ExpectedJson {
+                context: context.to_string(),
+            })
+        }
+    }
+}
+
+fn expect_bool(value: &Value, context: &str) -> Result<bool, InterpretError> {
+    match value {
+        Value::Bool(value) | Value::Json(JsonValue::Bool(value)) => Ok(*value),
+        Value::Json(_) | Value::HttpResponse(_) | Value::Enum(_) | Value::Unit => {
+            Err(InterpretError::ExpectedBool {
+                context: context.to_string(),
+            })
+        }
+    }
+}
+
+fn expect_enum(value: Value, context: &str) -> Result<EnumValue, InterpretError> {
+    match value {
+        Value::Enum(value) => Ok(value),
+        Value::Json(_) | Value::Bool(_) | Value::HttpResponse(_) | Value::Unit => {
+            Err(InterpretError::ExpectedEnum {
                 context: context.to_string(),
             })
         }
@@ -898,12 +1003,8 @@ mod tests {
             Ok(value)
         }
 
-        fn validate_email(&mut self, value: &serde_json::Value) -> Result<(), InterpretError> {
-            if value.as_str().is_some_and(|email| email.contains('@')) {
-                return Ok(());
-            }
-
-            Err(api_invalid_input("invalid_email"))
+        fn validate_email(&mut self, value: &serde_json::Value) -> Result<bool, InterpretError> {
+            Ok(value.as_str().is_some_and(|email| email.contains('@')))
         }
 
         fn validate_length(
@@ -911,18 +1012,14 @@ mod tests {
             value: &serde_json::Value,
             min: i64,
             max: i64,
-        ) -> Result<(), InterpretError> {
+        ) -> Result<bool, InterpretError> {
             let Some(text) = value.as_str() else {
-                return Err(api_invalid_input("invalid_name"));
+                return Ok(false);
             };
             let len = i64::try_from(text.chars().count()).map_err(|_| {
                 InterpretError::UnsupportedExpression("test string too long".into())
             })?;
-            if (min..=max).contains(&len) {
-                return Ok(());
-            }
-
-            Err(api_invalid_input("invalid_name"))
+            Ok((min..=max).contains(&len))
         }
 
         fn insert_user(

@@ -121,6 +121,11 @@ pub enum Stmt {
         value: Expr,
         range: SourceRange,
     },
+    Ensure {
+        condition: Expr,
+        error: Expr,
+        range: SourceRange,
+    },
     Match {
         value: Expr,
         arms: Vec<MatchArm>,
@@ -132,10 +137,11 @@ impl Stmt {
     #[must_use]
     pub const fn range(&self) -> SourceRange {
         match self {
-            Self::Let { range, .. } | Self::Expr { range, .. } | Self::Return { range, .. } => {
-                *range
-            }
-            Self::Match { range, .. } => *range,
+            Self::Let { range, .. }
+            | Self::Expr { range, .. }
+            | Self::Return { range, .. }
+            | Self::Ensure { range, .. }
+            | Self::Match { range, .. } => *range,
         }
     }
 }
@@ -184,6 +190,10 @@ pub enum Expr {
         value: i64,
         range: SourceRange,
     },
+    Bool {
+        value: bool,
+        range: SourceRange,
+    },
     Object {
         fields: Vec<ObjectField>,
         range: SourceRange,
@@ -209,6 +219,7 @@ impl Expr {
         match self {
             Self::String { range, .. }
             | Self::Integer { range, .. }
+            | Self::Bool { range, .. }
             | Self::Object { range, .. }
             | Self::Call { range, .. }
             | Self::Try { range, .. } => *range,

@@ -1,5 +1,5 @@
 use are_diagnostics::Diagnostic;
-use are_http_runtime::run_project;
+use are_http_runtime::{TestReport, run_project, test_project};
 use are_project::check_path;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -64,6 +64,17 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+
+    /// Run the Arelang project test loop.
+    Test {
+        /// Project directory to test.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Emit machine-readable test results.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -127,6 +138,7 @@ fn main() -> ExitCode {
 
             ExitCode::SUCCESS
         }
+        Command::Test { path, json } => run_test(&path, json),
     }
 }
 
@@ -157,6 +169,7 @@ fn create_project(
     println!("created {} ({})", path.display(), template.label());
     println!("next:");
     println!("  ./are check {}", path.display());
+    println!("  ./are test {}", path.display());
     println!("  ./are run {}", path.display());
     match template {
         ProjectTemplate::Minimal => {
@@ -219,6 +232,55 @@ fn print_human_diagnostics(diagnostics: &[Diagnostic]) {
             .entry(diagnostic.file.clone())
             .or_insert_with(|| fs::read_to_string(&diagnostic.file).ok());
         eprintln!("{}", diagnostic.render(source.as_deref()));
+    }
+}
+
+fn run_test(path: &Path, json: bool) -> ExitCode {
+    let report = match test_project(path) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(encoded) => println!("{encoded}"),
+            Err(err) => {
+                eprintln!("failed to encode test JSON: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        print_test_report(&report);
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn print_test_report(report: &TestReport) {
+    println!("tested {} v{}", report.package, report.version);
+    println!("service {}", report.service);
+    println!("routes:");
+    for route in &report.routes {
+        println!(
+            "  {:<6} {:<24} -> {}",
+            route.method, route.path, route.handler
+        );
+    }
+
+    if report.scenarios.is_empty() {
+        println!("scenarios: none matched; static checks and route registry passed");
+        return;
+    }
+
+    println!("scenarios:");
+    for scenario in &report.scenarios {
+        println!("  ok {}", scenario.name);
+        for check in &scenario.checks {
+            println!("    - {check}");
+        }
     }
 }
 

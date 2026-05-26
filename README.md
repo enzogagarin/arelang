@@ -49,11 +49,14 @@ From the repository root, the current demos are intentionally a small set of com
 ./are new scratch_api --port 8090
 ./are new scratch_users --template users --port 8091
 ./are check scratch_api
+./are test scratch_api
 ./are run scratch_api
 ./are check examples/hello_api
 ./are run examples/hello_api
 ./are check examples/users_api
 ./are check examples/users_api --json
+./are test examples/users_api
+./are test examples/users_api --json
 ./are run examples/users_api
 ./scripts/mvp-smoke.sh
 cargo test
@@ -69,6 +72,7 @@ After that, the commands become:
 
 ```sh
 are check examples/hello_api
+are test examples/hello_api
 are run examples/hello_api
 ```
 
@@ -81,9 +85,11 @@ are run examples/hello_api
 
 When a server starts, `are run` prints the service name, package, listen URL, and route table so the project is immediately curlable.
 
-`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, tests, clippy, static checks for the bundled examples, creates fresh minimal and users-template APIs, starts real HTTP servers on high local ports, and verifies responses with `curl`.
+`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, Rust tests, clippy, `are check`, `are test`, generated minimal and users-template APIs, real HTTP servers on high local ports, and response verification with `curl`.
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
+
+`are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
 
 Example human diagnostic:
 

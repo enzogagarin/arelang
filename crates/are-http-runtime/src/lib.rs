@@ -7,7 +7,7 @@ use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -17,6 +17,7 @@ pub enum RuntimeError {
     StaticChecks(CheckResult),
     UnsupportedProject(String),
     Server(String),
+    Test(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -31,7 +32,9 @@ impl std::fmt::Display for RuntimeError {
                 }
                 Ok(())
             }
-            Self::UnsupportedProject(message) | Self::Server(message) => f.write_str(message),
+            Self::UnsupportedProject(message) | Self::Server(message) | Self::Test(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -44,6 +47,28 @@ impl From<ProjectError> for RuntimeError {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TestReport {
+    pub package: String,
+    pub version: String,
+    pub service: String,
+    pub routes: Vec<TestRoute>,
+    pub scenarios: Vec<TestScenario>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestRoute {
+    pub method: String,
+    pub path: String,
+    pub handler: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestScenario {
+    pub name: String,
+    pub checks: Vec<String>,
+}
+
 /// Run an Arelang HTTP project.
 ///
 /// # Errors
@@ -52,6 +77,74 @@ impl From<ProjectError> for RuntimeError {
 /// project is not supported by the current HTTP MVP runtime, or the TCP server
 /// cannot be started.
 pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
+    let prepared = prepare_project(path)?;
+    let server_config = prepared.manifest.server.clone().ok_or_else(|| {
+        RuntimeError::UnsupportedProject("server target requires [server] config".into())
+    })?;
+    let address = format!("{}:{}", server_config.host, server_config.port);
+    let server = Server::http(&address).map_err(|err| {
+        RuntimeError::Server(format!(
+            "failed to start HTTP server at http://{address}\nreason: {err}\nhint: another process may already be using this address; stop it or change [server].port in are.toml"
+        ))
+    })?;
+
+    print_run_summary(
+        &prepared.manifest,
+        &prepared.service,
+        &prepared.routes,
+        &address,
+    );
+
+    run_http_server(
+        &server,
+        &prepared.routes,
+        &prepared.functions,
+        &prepared.root,
+        &prepared.manifest,
+    );
+    Ok(())
+}
+
+/// Run the MVP project test loop without opening a TCP listener.
+///
+/// # Errors
+///
+/// Returns an error if static checks fail, the project cannot be prepared for
+/// the HTTP runtime, or a built-in MVP HTTP scenario fails.
+pub fn test_project(path: &Path) -> Result<TestReport, RuntimeError> {
+    let prepared = prepare_project(path)?;
+    let mut scenarios = Vec::new();
+
+    if prepared.routes.has("GET", "/ping") {
+        scenarios.push(test_ping_scenario(&prepared)?);
+    }
+
+    if prepared.routes.has("GET", "/health")
+        && prepared.routes.has("POST", "/users")
+        && prepared.routes.has("GET", "/users/:id")
+    {
+        scenarios.push(test_users_scenario(&prepared)?);
+    }
+
+    Ok(TestReport {
+        package: prepared.manifest.package.name,
+        version: prepared.manifest.package.version,
+        service: prepared.service,
+        routes: prepared.routes.test_routes(),
+        scenarios,
+    })
+}
+
+#[derive(Debug)]
+struct PreparedProject {
+    root: PathBuf,
+    manifest: Manifest,
+    service: String,
+    routes: RuntimeRoutes,
+    functions: RuntimeFunctions,
+}
+
+fn prepare_project(path: &Path) -> Result<PreparedProject, RuntimeError> {
     let root = project_root(path)?;
     let manifest = load_manifest(&root)?;
     if manifest.package.target != "server" {
@@ -78,29 +171,18 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
     let service = find_single_service(&check.modules)?;
     let routes = RuntimeRoutes::from_service(service)?;
     let functions = RuntimeFunctions::from_modules(&check.modules);
-    let server_config = manifest.server.clone().ok_or_else(|| {
-        RuntimeError::UnsupportedProject("server target requires [server] config".into())
-    })?;
-    let address = format!("{}:{}", server_config.host, server_config.port);
-    let server = Server::http(&address).map_err(|err| {
-        RuntimeError::Server(format!(
-            "failed to start HTTP server at http://{address}\nreason: {err}\nhint: another process may already be using this address; stop it or change [server].port in are.toml"
-        ))
-    })?;
 
-    print_run_summary(&manifest, service, &routes, &address);
-
-    run_http_server(&server, &routes, &functions, &root, &manifest);
-    Ok(())
+    Ok(PreparedProject {
+        root,
+        manifest,
+        service: service.name.clone(),
+        routes,
+        functions,
+    })
 }
 
-fn print_run_summary(
-    manifest: &Manifest,
-    service: &ServiceDecl,
-    routes: &RuntimeRoutes,
-    address: &str,
-) {
-    println!("{} running at http://{}", service.name, address);
+fn print_run_summary(manifest: &Manifest, service: &str, routes: &RuntimeRoutes, address: &str) {
+    println!("{service} running at http://{address}");
     println!(
         "package {} v{}",
         manifest.package.name, manifest.package.version
@@ -159,6 +241,140 @@ fn handle_tiny_request(
         .map_err(|err| RuntimeError::Server(format!("failed to write response: {err}")))
 }
 
+fn test_ping_scenario(prepared: &PreparedProject) -> Result<TestScenario, RuntimeError> {
+    let state = UsersApiState::default();
+    let response = runtime_response(
+        &state,
+        &prepared.routes,
+        &prepared.functions,
+        &Method::Get,
+        "/ping",
+        "",
+    );
+
+    expect_status(&response, 200, "GET /ping")?;
+    expect_json_string(&response, "message", "pong", "GET /ping")?;
+
+    Ok(TestScenario {
+        name: "minimal ping HTTP flow".to_string(),
+        checks: vec![
+            "GET /ping returned 200".to_string(),
+            "GET /ping returned message=pong".to_string(),
+        ],
+    })
+}
+
+fn test_users_scenario(prepared: &PreparedProject) -> Result<TestScenario, RuntimeError> {
+    let state = UsersApiState::default();
+    let mut checks = Vec::new();
+
+    let health = runtime_response(
+        &state,
+        &prepared.routes,
+        &prepared.functions,
+        &Method::Get,
+        "/health",
+        "",
+    );
+    expect_status(&health, 200, "GET /health")?;
+    expect_json_string(&health, "status", "ok", "GET /health")?;
+    checks.push("GET /health returned 200".to_string());
+
+    let invalid = runtime_response(
+        &state,
+        &prepared.routes,
+        &prepared.functions,
+        &Method::Post,
+        "/users",
+        r#"{"email":"invalid","name":"Ada"}"#,
+    );
+    expect_status(&invalid, 400, "POST /users invalid email")?;
+    expect_json_string(
+        &invalid,
+        "error",
+        "invalid_email",
+        "POST /users invalid email",
+    )?;
+    checks.push("POST /users rejects invalid email with 400".to_string());
+
+    let created = runtime_response(
+        &state,
+        &prepared.routes,
+        &prepared.functions,
+        &Method::Post,
+        "/users",
+        r#"{"email":"ada@example.com","name":"Ada Lovelace"}"#,
+    );
+    expect_status(&created, 201, "POST /users")?;
+    expect_json_u64(&created, "id", 1, "POST /users")?;
+    expect_json_string(&created, "email", "ada@example.com", "POST /users")?;
+    checks.push("POST /users creates a user with 201".to_string());
+
+    let fetched = runtime_response(
+        &state,
+        &prepared.routes,
+        &prepared.functions,
+        &Method::Get,
+        "/users/1",
+        "",
+    );
+    expect_status(&fetched, 200, "GET /users/1")?;
+    expect_json_string(&fetched, "name", "Ada Lovelace", "GET /users/1")?;
+    checks.push("GET /users/:id fetches the created user".to_string());
+
+    Ok(TestScenario {
+        name: "users API HTTP flow".to_string(),
+        checks,
+    })
+}
+
+fn expect_status(
+    response: &RuntimeResponse,
+    expected: u16,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response.status == expected {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected HTTP {expected}, got {} with body {}",
+        response.status, response.body
+    )))
+}
+
+fn expect_json_string(
+    response: &RuntimeResponse,
+    field: &str,
+    expected: &str,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response.body.get(field).and_then(serde_json::Value::as_str) == Some(expected) {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected JSON field `{field}` to be `{expected}`, got {}",
+        response.body
+    )))
+}
+
+fn expect_json_u64(
+    response: &RuntimeResponse,
+    field: &str,
+    expected: u64,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response.body.get(field).and_then(serde_json::Value::as_u64) == Some(expected) {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected JSON field `{field}` to be `{expected}`, got {}",
+        response.body
+    )))
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeRoutes {
     routes: Vec<RuntimeRoute>,
@@ -203,6 +419,23 @@ impl RuntimeRoutes {
 
             match_route(&route.path, path).map(|params| (route.handler.as_str(), params))
         })
+    }
+
+    fn has(&self, method: &str, path: &str) -> bool {
+        self.routes
+            .iter()
+            .any(|route| route.method == method && route.path == path)
+    }
+
+    fn test_routes(&self) -> Vec<TestRoute> {
+        self.routes
+            .iter()
+            .map(|route| TestRoute {
+                method: route.method.clone(),
+                path: route.path.clone(),
+                handler: route.handler.clone(),
+            })
+            .collect()
     }
 }
 
@@ -599,7 +832,7 @@ fn match_route(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
 mod tests {
     use super::{
         RuntimeFunctions, RuntimeRoutes, UsersApiState, find_single_service, match_route,
-        route_summary_line, runtime_response,
+        route_summary_line, runtime_response, test_project,
     };
     use are_project::check_path;
     use std::path::Path;
@@ -672,6 +905,26 @@ mod tests {
         let ping = runtime_response(&state, &routes, &functions, &Method::Get, "/ping", "");
         assert_eq!(ping.status, 200);
         assert_eq!(ping.body["message"], "pong");
+    }
+
+    #[test]
+    fn tests_minimal_hello_api_project() {
+        let report = test_project(Path::new("../../examples/hello_api")).expect("project tests");
+        assert_eq!(report.package, "hello-api");
+        assert_eq!(report.service, "HelloApi");
+        assert_eq!(report.routes.len(), 1);
+        assert_eq!(report.scenarios.len(), 1);
+        assert_eq!(report.scenarios[0].name, "minimal ping HTTP flow");
+    }
+
+    #[test]
+    fn tests_users_api_project() {
+        let report = test_project(Path::new("../../examples/users_api")).expect("project tests");
+        assert_eq!(report.package, "users-api");
+        assert_eq!(report.service, "UsersApi");
+        assert_eq!(report.routes.len(), 3);
+        assert_eq!(report.scenarios.len(), 1);
+        assert_eq!(report.scenarios[0].name, "users API HTTP flow");
     }
 
     fn users_api_functions() -> RuntimeFunctions {

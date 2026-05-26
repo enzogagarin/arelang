@@ -108,7 +108,7 @@ Definition of done:
 Output:
 
 - `are fmt`
-- `are test`
+- `are test`: started
 - `are check --json`
 - diagnostic fix suggestions: started
 - source snippet diagnostics: done

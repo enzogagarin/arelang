@@ -53,6 +53,7 @@ source.are
 ```sh
 are check examples/users_api
 are check --json examples/users_api
+are test examples/users_api
 are run examples/users_api
 ```
 
@@ -73,7 +74,14 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
-- start the users API HTTP MVP adapter
+- start the embedded HTTP MVP runtime
+
+Current `are test` behavior:
+
+- run the same static checks and runtime project preparation as `are run`
+- collect the checked service route registry
+- execute built-in MVP runtime scenarios without opening a TCP listener
+- emit human or JSON test reports
 
 ## Diagnostic Shape
 

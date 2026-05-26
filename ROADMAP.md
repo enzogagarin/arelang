@@ -67,13 +67,14 @@ Output:
 - `?` propagation checks: done
 - route body contract checks: done
 - route response and success status contract checks: done
+- route handlers returning domain payloads from `returns` contracts: done
 - typed path parameter contract checks: done
 - function body checker module split: done
 
 Definition of done:
 
 - invalid field names, unknown symbols, bad return types, and unhandled `Result` values are reported with stable diagnostic codes
-- `users_api` route handlers must use `(ctx: Http.Context<AppState>, req: Http.Request)` and return `Http.Response` or `Result<Http.Response, ApiError>`
+- `users_api` route handlers must use `(ctx: Http.Context<AppState>, req: Http.Request)` and may return route payloads such as `User` or `Result<User, ApiError>`
 
 ## Milestone 3: Interpreter Core
 
@@ -102,6 +103,7 @@ Output:
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
 - route response contracts: done for `returns Payload status N`
+- domain payload handlers: done for `Payload` and `Result<Payload, E>`
 - API error mapping: done through `Http.error_map`
 
 Definition of done:
@@ -112,6 +114,7 @@ Definition of done:
 - `GET /users/{id: UserId}` returns that user or a typed error: done
 - canonical route contracts with method shorthand, typed path params, and request body declarations: done
 - successful HTTP responses are validated against declared `returns` and `status` contracts: done
+- successful domain payloads are wrapped into HTTP responses by the route contract: done
 - function body interpreter replaces the temporary users API adapter
 
 ## Milestone 5: Backend Quality Loop

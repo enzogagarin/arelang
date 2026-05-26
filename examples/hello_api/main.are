@@ -6,8 +6,8 @@ struct PingResponse {
     message: String
 }
 
-fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
-    return Http.Response.ok({ "message": "pong" })
+fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> PingResponse {
+    return { "message": "pong" }
 }
 
 service HelloApi(state: AppState) {

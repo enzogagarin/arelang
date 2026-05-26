@@ -27,7 +27,7 @@ impl TypeChecker<'_> {
 
             self.check_route_io_contract(route, handler, &path_params);
             self.check_route_handler_response_contract(route, handler);
-            if let Some(error_type) = self.check_route_handler(handler, state_type) {
+            if let Some(error_type) = self.check_route_handler(route, handler, state_type) {
                 result_error_types.push(error_type);
             }
         }
@@ -452,6 +452,7 @@ impl TypeChecker<'_> {
 
     fn check_route_handler(
         &mut self,
+        route: &RouteDecl,
         handler: &FunctionDecl,
         state_type: &TypeExpr,
     ) -> Option<TypeExpr> {
@@ -503,8 +504,8 @@ impl TypeChecker<'_> {
                 "E_HTTP_0204",
                 &self.file,
                 handler.range,
-                format!("route handler `{}` must return Http.Response", handler.name),
-                "handlers may return Http.Response or Result<Http.Response, ApiError>",
+                format!("route handler `{}` must declare a return type", handler.name),
+                "handlers may return Http.Response, Result<Http.Response, ApiError>, or the route `returns` type",
             ));
             return None;
         };
@@ -517,6 +518,18 @@ impl TypeChecker<'_> {
             return Some(error_type.clone());
         }
 
+        if let Some(response_type) = &route.response_type {
+            if same_type(return_type, response_type) {
+                return None;
+            }
+
+            if let Some((ok_type, error_type)) = result_ok_error(return_type)
+                && same_type(ok_type, response_type)
+            {
+                return Some(error_type.clone());
+            }
+        }
+
         self.diagnostics.push(Diagnostic::error(
             "E_HTTP_0204",
             &self.file,
@@ -526,7 +539,7 @@ impl TypeChecker<'_> {
                 handler.name,
                 type_name(return_type)
             ),
-            "handlers may return Http.Response or Result<Http.Response, ApiError>",
+            "handlers may return Http.Response, Result<Http.Response, ApiError>, or the declared route response type",
         ));
 
         None
@@ -665,18 +678,8 @@ impl TypeChecker<'_> {
     }
 
     fn result_response_error<'b>(&self, ty: &'b TypeExpr) -> Option<&'b TypeExpr> {
-        let TypeExpr::Generic { base, args, .. } = ty else {
-            return None;
-        };
-
-        if !path_is(base, &["Result"])
-            || args.len() != 2
-            || !self.is_http_path(&args[0], "Response")
-        {
-            return None;
-        }
-
-        Some(&args[1])
+        let (ok_type, error_type) = result_ok_error(ty)?;
+        self.is_http_path(ok_type, "Response").then_some(error_type)
     }
 
     fn is_http_context_of(&self, ty: &TypeExpr, state_type: &TypeExpr) -> bool {
@@ -879,6 +882,18 @@ fn is_http_method(method: &str) -> bool {
         method,
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
     )
+}
+
+fn result_ok_error(ty: &TypeExpr) -> Option<(&TypeExpr, &TypeExpr)> {
+    let TypeExpr::Generic { base, args, .. } = ty else {
+        return None;
+    };
+
+    if !path_is(base, &["Result"]) || args.len() != 2 {
+        return None;
+    }
+
+    Some((&args[0], &args[1]))
 }
 
 fn route_method_allows_body(method: &str) -> bool {

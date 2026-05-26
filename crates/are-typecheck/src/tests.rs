@@ -238,6 +238,33 @@ fn checks_response_status_against_handler_success_status() {
 }
 
 #[test]
+fn accepts_domain_return_handlers_from_route_contracts() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct User { name: String }
+            enum ApiError { Failed }
+
+            fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
+                return { "name": "Ada" }
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {
+                return Http.Response.error(500, { "error": "failed" })
+            }
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                post "/users" -> create_user returns User status 201
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
 fn rejects_invalid_result_arity() {
     let source = r#"
             use std.http as Http

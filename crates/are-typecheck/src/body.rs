@@ -932,7 +932,7 @@ impl BodyChecker<'_> {
             return;
         };
 
-        if Self::return_accepts(return_type, value_type) {
+        if self.return_accepts(return_type, value_type) {
             return;
         }
 
@@ -948,15 +948,29 @@ impl BodyChecker<'_> {
         );
     }
 
-    fn return_accepts(expected: &BodyType, actual: &BodyType) -> bool {
+    fn return_accepts(&self, expected: &BodyType, actual: &BodyType) -> bool {
         if same_body_type(expected, actual) {
             return true;
         }
 
-        matches!(
-            expected,
-            BodyType::Result { ok, .. } if same_body_type(ok, actual)
-        )
+        if self.named_payload_accepts_object(expected, actual) {
+            return true;
+        }
+
+        match expected {
+            BodyType::Result { ok, .. } => {
+                same_body_type(ok, actual) || self.named_payload_accepts_object(ok, actual)
+            }
+            _ => false,
+        }
+    }
+
+    fn named_payload_accepts_object(&self, expected: &BodyType, actual: &BodyType) -> bool {
+        let (BodyType::Named(name), BodyType::Object) = (expected, actual) else {
+            return false;
+        };
+
+        self.structs.contains_key(name) || self.models.contains_key(name)
     }
 
     fn result_type(&self, ok: BodyType) -> BodyType {

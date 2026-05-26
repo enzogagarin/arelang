@@ -428,8 +428,8 @@ struct PingResponse {{
     message: String
 }}
 
-fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
-    return Http.Response.ok({{ "message": "pong" }})
+fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> PingResponse {{
+    return {{ "message": "pong" }}
 }}
 
 service {service_name}(state: AppState) {{
@@ -470,8 +470,8 @@ enum ApiError {{
     Internal(message: String)
 }}
 
-fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
-    return Http.Response.ok({{ "status": "ok" }})
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse {{
+    return {{ "status": "ok" }}
 }}
 
 fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {{
@@ -480,16 +480,16 @@ fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {{
     return input
 }}
 
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {{
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {{
     let input = validate_user(req.json<CreateUserInput>()?)?
     let user = ctx.db.users.insert(input)?
-    return Http.Response.created(user)
+    return user
 }}
 
-fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {{
+fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {{
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
-    return Http.Response.ok(user)
+    return user
 }}
 
 fn map_error(err: ApiError) -> Http.Response {{

@@ -33,7 +33,7 @@ fn parses_users_api_shape() {
     let Some(Stmt::Return { value, .. }) = block.statements.first() else {
         panic!("health should return a response");
     };
-    assert!(matches!(value, Expr::Call { .. }));
+    assert!(matches!(value, Expr::Object { .. }));
 
     let validate_user = function_named(&module, "validate_user");
     let FunctionBody::Parsed { block } = &validate_user.body else {

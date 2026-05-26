@@ -776,6 +776,7 @@ fn runtime_response(
         state,
         functions,
         routes.error_mapper.as_deref(),
+        route,
         &route.handler,
         &params,
         body,
@@ -821,6 +822,7 @@ fn interpreted_response(
     state: &UsersApiState,
     functions: &RuntimeFunctions,
     error_mapper: Option<&str>,
+    route: &RuntimeRoute,
     handler: &str,
     params: &HashMap<String, String>,
     body: &str,
@@ -840,8 +842,14 @@ fn interpreted_response(
             status: response.status,
             body: response.body,
         },
-        Ok(InterpretedValue::Json(_)) => error_response(500, "handler_returned_json"),
-        Ok(InterpretedValue::Bool(_)) => error_response(500, "handler_returned_bool"),
+        Ok(InterpretedValue::Json(body)) => RuntimeResponse {
+            status: route.status.unwrap_or(200),
+            body,
+        },
+        Ok(InterpretedValue::Bool(value)) => RuntimeResponse {
+            status: route.status.unwrap_or(200),
+            body: serde_json::Value::Bool(value),
+        },
         Ok(InterpretedValue::Enum(_)) => error_response(500, "handler_returned_enum"),
         Ok(InterpretedValue::Unit) => error_response(500, "handler_returned_unit"),
         Err(err) => {

@@ -117,7 +117,15 @@ help: did you mean `create_user`?
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly:
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly, so handlers can return domain payloads instead of manually wrapping every success response:
+
+```are
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
+    let input = validate_user(req.json<CreateUserInput>()?)?
+    let user = ctx.db.users.insert(input)?
+    return user
+}
+```
 
 ```are
 service UsersApi(state: AppState) {
@@ -129,7 +137,7 @@ service UsersApi(state: AppState) {
 }
 ```
 
-The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `returns User status 201` matches the success response shape where the compiler can infer it, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then validates successful response JSON and success status before sending the response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
+The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health

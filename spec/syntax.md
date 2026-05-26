@@ -25,8 +25,8 @@ let mut count = 0
 ## Functions
 
 ```are
-fn health() -> Http.Response {
-    return Http.Response.ok({ "status": "ok" })
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse {
+    return { "status": "ok" }
 }
 ```
 
@@ -37,9 +37,10 @@ Functions use explicit return types. A missing return type means `Unit` only if 
 v0 uses explicit `Result<T, E>`.
 
 ```are
-fn create_user(req: Http.Request) -> Result<Http.Response, ApiError> {
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
     let input = req.json<CreateUserInput>()?
-    return Http.Response.created(input)
+    let user = ctx.db.users.insert(input)?
+    return user
 }
 ```
 

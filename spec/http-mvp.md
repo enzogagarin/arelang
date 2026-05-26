@@ -33,17 +33,24 @@ Current implementation status:
 Handlers receive a typed context and request.
 
 ```are
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError>
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError>
 ```
 
-The first type checker accepts either:
+The preferred handler style returns domain payloads and lets the route contract carry HTTP status:
+
+```are
+fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse
+fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError>
+```
+
+The compatibility style still accepts explicit HTTP responses:
 
 ```are
 fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response
 fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError>
 ```
 
-Routes returning `Result<Http.Response, E>` require one service-level mapper:
+Routes returning `Result<Payload, E>` or `Result<Http.Response, E>` require one service-level mapper:
 
 ```are
 fn map_error(err: ApiError) -> Http.Response
@@ -75,15 +82,15 @@ The compiler should check:
 
 - handler exists
 - handler has a valid HTTP signature
-- handler returns `Http.Response` or `Result<Http.Response, E>`
+- handler returns `Http.Response`, `Result<Http.Response, E>`, the declared `returns` payload, or `Result<Payload, E>`
 - result-returning handlers have a compatible `Http.error_map`
 - typed route params such as `{id: UserId}` are read through matching `ctx.param<UserId>("id")`
 - body contracts such as `body CreateUserInput` are decoded through matching `req.json<CreateUserInput>()`
-- response contracts such as `returns User` name a known JSON payload type and match success response bodies where the compiler can infer them
-- status contracts such as `status 201` use valid HTTP status codes and match success response constructors such as `Http.Response.created`
+- response contracts such as `returns User` name a known JSON payload type and match handler domain return types
+- status contracts such as `status 201` use valid HTTP status codes and match explicit success response constructors when a handler still returns `Http.Response`
 - duplicate method/path pairs are rejected
 
-At runtime, successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
+At runtime, domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
 
 ## Response Helpers
 

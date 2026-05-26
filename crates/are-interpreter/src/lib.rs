@@ -583,13 +583,7 @@ mod tests {
     fn interprets_health_response_from_arelang_body() {
         let health = users_api_function("health");
         let value = interpret_function(&health).expect("health interprets");
-        assert_eq!(
-            value,
-            Value::HttpResponse(HttpResponseValue {
-                status: 200,
-                body: serde_json::json!({ "status": "ok" }),
-            })
-        );
+        assert_eq!(value, Value::Json(serde_json::json!({ "status": "ok" })));
     }
 
     #[test]
@@ -601,14 +595,11 @@ mod tests {
 
         assert_eq!(
             value,
-            Value::HttpResponse(HttpResponseValue {
-                status: 201,
-                body: serde_json::json!({
-                    "id": 1,
-                    "email": "ada@example.com",
-                    "name": "Ada",
-                }),
-            })
+            Value::Json(serde_json::json!({
+                "id": 1,
+                "email": "ada@example.com",
+                "name": "Ada",
+            }))
         );
     }
 
@@ -637,14 +628,11 @@ mod tests {
 
         assert_eq!(
             value,
-            Value::HttpResponse(HttpResponseValue {
-                status: 200,
-                body: serde_json::json!({
-                    "id": 1,
-                    "email": "ada@example.com",
-                    "name": "Ada",
-                }),
-            })
+            Value::Json(serde_json::json!({
+                "id": 1,
+                "email": "ada@example.com",
+                "name": "Ada",
+            }))
         );
     }
 

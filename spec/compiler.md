@@ -91,6 +91,7 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
+- wrap domain payload handler results using the route response/status contract
 - validate route-level body, path, response, and status contracts at the host boundary
 - start the embedded HTTP MVP runtime
 

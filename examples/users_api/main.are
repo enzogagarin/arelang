@@ -56,7 +56,7 @@ fn map_error(err: ApiError) -> Http.Response {
 service UsersApi(state: AppState) {
     use Http.error_map(map_error)
 
-    route GET "/health" -> health
-    route POST "/users" -> create_user
-    route GET "/users/:id" -> get_user
+    get "/health" -> health
+    post "/users" body CreateUserInput -> create_user
+    get "/users/{id: UserId}" -> get_user
 }

@@ -104,8 +104,8 @@ Example human diagnostic:
 error[E_RESOLVE_0002]: unknown route handler `create_usr`
   --> users_api/main.are:61:28
    |
-61 |     route POST "/users" -> create_usr
-   |                            ^^^^^^^^^^
+61 |     post "/users" body CreateUserInput -> create_usr
+   |                                           ^^^^^^^^^^
    |
 note: declare a function with this name before wiring it in a service route
 help: did you mean `create_user`?
@@ -117,7 +117,19 @@ help: did you mean `create_user`?
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/:id` routes are executed from their Arelang function bodies through the MVP interpreter. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly:
+
+```are
+service UsersApi(state: AppState) {
+    use Http.error_map(map_error)
+
+    get "/health" -> health
+    post "/users" body CreateUserInput -> create_user
+    get "/users/{id: UserId}" -> get_user
+}
+```
+
+The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` uses the MVP in-memory database host before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
 
 ```sh
 curl http://127.0.0.1:8080/health

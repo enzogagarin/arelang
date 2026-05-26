@@ -170,7 +170,8 @@ impl<'a> TypeChecker<'a> {
         let mut result_error_types = Vec::new();
 
         for route in &decl.routes {
-            self.check_route_shape(route);
+            let path_params = self.check_route_shape(route);
+            self.check_route_body_contract(route);
 
             let Some(handler) = route
                 .handler
@@ -182,6 +183,7 @@ impl<'a> TypeChecker<'a> {
                 continue;
             };
 
+            self.check_route_io_contract(route, handler, &path_params);
             if let Some(error_type) = self.check_route_handler(handler, state_type) {
                 result_error_types.push(error_type);
             }
@@ -190,7 +192,7 @@ impl<'a> TypeChecker<'a> {
         self.check_error_mapping(decl, &result_error_types);
     }
 
-    fn check_route_shape(&mut self, route: &RouteDecl) {
+    fn check_route_shape(&mut self, route: &RouteDecl) -> Vec<RoutePathParam> {
         if !is_http_method(&route.method) {
             self.diagnostics.push(Diagnostic::error(
                 "E_HTTP_0101",
@@ -211,38 +213,255 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        self.check_route_params(route);
+        self.check_route_params(route)
     }
 
-    fn check_route_params(&mut self, route: &RouteDecl) {
+    fn check_route_params(&mut self, route: &RouteDecl) -> Vec<RoutePathParam> {
         let mut params = HashMap::new();
+        let mut parsed = Vec::new();
 
         for segment in route.path.split('/') {
-            let Some(name) = segment.strip_prefix(':') else {
-                continue;
+            let param = match route_param_from_segment(segment) {
+                RouteSegmentParam::None => continue,
+                RouteSegmentParam::Malformed(reason) => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0105",
+                        &self.file,
+                        route.range,
+                        format!("invalid route parameter segment `{segment}`"),
+                        reason,
+                    ));
+                    continue;
+                }
+                RouteSegmentParam::Param(param) => param,
             };
 
-            if name.is_empty() || !is_identifier(name) {
+            if param.name.is_empty() || !is_identifier(&param.name) {
                 self.diagnostics.push(Diagnostic::error(
                     "E_HTTP_0103",
                     &self.file,
                     route.range,
-                    format!("invalid route parameter `:{name}`"),
-                    "route parameters must use identifier syntax, such as `:id`",
+                    format!("invalid route parameter `{}`", param.name),
+                    "route parameters must use identifier syntax, such as `id`",
                 ));
                 continue;
             }
 
-            if params.insert(name, route.range).is_some() {
+            if let Some(type_name) = &param.ty
+                && !self.is_known_contract_type(type_name)
+            {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0106",
+                    &self.file,
+                    route.range,
+                    format!("unknown route parameter type `{type_name}`"),
+                    "typed route parameters must use a builtin or local type",
+                ));
+            }
+
+            if params.insert(param.name.clone(), route.range).is_some() {
                 self.diagnostics.push(Diagnostic::error(
                     "E_HTTP_0104",
                     &self.file,
                     route.range,
-                    format!("duplicate route parameter `:{name}`"),
+                    format!("duplicate route parameter `{}`", param.name),
                     "each route parameter name must be unique within a path",
                 ));
             }
+
+            parsed.push(param);
         }
+
+        parsed
+    }
+
+    fn check_route_body_contract(&mut self, route: &RouteDecl) {
+        let Some(body_type) = &route.body_type else {
+            return;
+        };
+
+        if !route_method_allows_body(&route.method) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0410",
+                &self.file,
+                body_type.range(),
+                format!("{} routes cannot declare a request body", route.method),
+                "body contracts are currently accepted for POST, PUT, and PATCH routes",
+            ));
+        }
+
+        if !self.is_local_payload_type(body_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0411",
+                &self.file,
+                body_type.range(),
+                format!(
+                    "route body `{}` is not a local payload type",
+                    type_name(body_type)
+                ),
+                "body contracts should name a local struct or model such as `CreateUserInput`",
+            ));
+        }
+    }
+
+    fn check_route_io_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+    ) {
+        let uses = collect_handler_io_uses(handler);
+        self.check_route_path_param_contract(route, handler, path_params, &uses);
+        self.check_route_body_decode_contract(route, handler, &uses);
+    }
+
+    fn check_route_path_param_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+        uses: &HandlerIoUses,
+    ) {
+        for param_use in &uses.path_params {
+            let Some(name) = &param_use.name else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0404",
+                    &self.file,
+                    param_use.range,
+                    "ctx.param requires a literal route parameter name",
+                    "write route parameter reads as `ctx.param<UserId>(\"id\")` so the compiler can check the route contract",
+                ));
+                continue;
+            };
+
+            let Some(route_param) = path_params.iter().find(|param| param.name == *name) else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0403",
+                    &self.file,
+                    param_use.range,
+                    format!(
+                        "handler `{}` reads unknown route parameter `{name}`",
+                        handler.name
+                    ),
+                    "the route path must declare the parameter before the handler can read it",
+                ));
+                continue;
+            };
+
+            if let Some(expected) = &route_param.ty {
+                match &param_use.ty {
+                    Some(actual) if actual == expected => {}
+                    Some(actual) => self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0402",
+                        &self.file,
+                        param_use.range,
+                        format!("route parameter `{name}` is `{expected}` but handler reads `{actual}`"),
+                        "the route path type and ctx.param<T> type must match",
+                    )),
+                    None => self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0402",
+                        &self.file,
+                        param_use.range,
+                        format!("route parameter `{name}` is `{expected}` but handler does not declare a read type"),
+                        "read typed route parameters with `ctx.param<T>(\"name\")`",
+                    )),
+                }
+            }
+        }
+
+        for route_param in path_params.iter().filter(|param| param.ty.is_some()) {
+            if uses
+                .path_params
+                .iter()
+                .any(|param_use| param_use.name.as_deref() == Some(route_param.name.as_str()))
+            {
+                continue;
+            }
+
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0401",
+                &self.file,
+                route.range,
+                format!(
+                    "typed route parameter `{}` is not read by handler `{}`",
+                    route_param.name, handler.name
+                ),
+                "typed path parameters are part of the handler contract and should be consumed with ctx.param<T>",
+            ));
+        }
+    }
+
+    fn check_route_body_decode_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        uses: &HandlerIoUses,
+    ) {
+        if let Some(body_type) = &route.body_type {
+            let expected = type_name(body_type);
+            if uses.request_bodies.is_empty() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0412",
+                    &self.file,
+                    route.range,
+                    format!(
+                        "route body `{expected}` is not decoded by handler `{}`",
+                        handler.name
+                    ),
+                    "decode the declared body with `req.json<T>()` inside the route handler",
+                ));
+                return;
+            }
+
+            if !uses
+                .request_bodies
+                .iter()
+                .any(|body_use| body_use.ty.as_deref() == Some(expected.as_str()))
+            {
+                let actual = uses
+                    .request_bodies
+                    .iter()
+                    .filter_map(|body_use| body_use.ty.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0413",
+                    &self.file,
+                    route.range,
+                    format!("route body `{expected}` does not match handler decode `{actual}`"),
+                    "the service route body contract and req.json<T>() type must match",
+                ));
+            }
+        } else if let Some(body_use) = uses.request_bodies.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0414",
+                &self.file,
+                body_use.range,
+                format!(
+                    "handler `{}` decodes JSON without a route body contract",
+                    handler.name
+                ),
+                "declare the route body as `post \"/path\" body Payload -> handler`",
+            ));
+        }
+    }
+
+    fn is_known_contract_type(&self, name: &str) -> bool {
+        is_builtin_type_name(name)
+            || self.types.contains_key(name)
+            || self.structs.contains_key(name)
+            || self.models.contains_key(name)
+            || self.enums.contains_key(name)
+    }
+
+    fn is_local_payload_type(&self, ty: &TypeExpr) -> bool {
+        let TypeExpr::Path { path } = ty else {
+            return false;
+        };
+
+        path.segments.len() == 1
+            && (self.structs.contains_key(&path.segments[0])
+                || self.models.contains_key(&path.segments[0]))
     }
 
     fn check_route_handler(
@@ -536,7 +755,14 @@ impl<'a> TypeChecker<'a> {
     fn check_generic_arities(&mut self) {
         for item in &self.module.items {
             match item {
-                Item::Use(_) | Item::Service(_) => {}
+                Item::Use(_) => {}
+                Item::Service(decl) => {
+                    for route in &decl.routes {
+                        if let Some(body_type) = &route.body_type {
+                            self.check_type_expr_arity(body_type);
+                        }
+                    }
+                }
                 Item::Type(decl) => self.check_type_expr_arity(&decl.aliased),
                 Item::Struct(decl) => {
                     for field in &decl.fields {
@@ -755,6 +981,37 @@ struct BodyChecker<'a> {
 struct EnumVariantShape {
     name: String,
     payload: Vec<(String, BodyType)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoutePathParam {
+    name: String,
+    ty: Option<String>,
+}
+
+enum RouteSegmentParam {
+    None,
+    Param(RoutePathParam),
+    Malformed(&'static str),
+}
+
+#[derive(Debug, Clone)]
+struct PathParamUse {
+    name: Option<String>,
+    ty: Option<String>,
+    range: SourceRange,
+}
+
+#[derive(Debug, Clone)]
+struct RequestBodyUse {
+    ty: Option<String>,
+    range: SourceRange,
+}
+
+#[derive(Debug, Default)]
+struct HandlerIoUses {
+    path_params: Vec<PathParamUse>,
+    request_bodies: Vec<RequestBodyUse>,
 }
 
 impl BodyChecker<'_> {
@@ -1932,11 +2189,167 @@ fn same_body_type(left: &BodyType, right: &BodyType) -> bool {
     }
 }
 
+fn collect_handler_io_uses(function: &FunctionDecl) -> HandlerIoUses {
+    let mut uses = HandlerIoUses::default();
+    let FunctionBody::Parsed { block } = &function.body else {
+        return uses;
+    };
+
+    for statement in &block.statements {
+        collect_statement_io_uses(statement, &mut uses);
+    }
+
+    uses
+}
+
+fn collect_statement_io_uses(statement: &Stmt, uses: &mut HandlerIoUses) {
+    match statement {
+        Stmt::Let { value, .. } | Stmt::Expr { value, .. } | Stmt::Return { value, .. } => {
+            collect_expr_io_uses(value, uses);
+        }
+        Stmt::Ensure {
+            condition, error, ..
+        } => {
+            collect_expr_io_uses(condition, uses);
+            collect_expr_io_uses(error, uses);
+        }
+        Stmt::Match { value, arms, .. } => {
+            collect_expr_io_uses(value, uses);
+            for arm in arms {
+                collect_statement_io_uses(&arm.body, uses);
+            }
+        }
+    }
+}
+
+fn collect_expr_io_uses(expr: &Expr, uses: &mut HandlerIoUses) {
+    match expr {
+        Expr::String { .. } | Expr::Integer { .. } | Expr::Bool { .. } | Expr::Path { .. } => {}
+        Expr::Object { fields, .. } => {
+            for field in fields {
+                collect_expr_io_uses(&field.value, uses);
+            }
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            range,
+        } => {
+            let callee_name = path_name(callee);
+            if callee_name == "ctx.param" {
+                uses.path_params.push(PathParamUse {
+                    name: first_string_arg(args),
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            } else if callee_name == "req.json" {
+                uses.request_bodies.push(RequestBodyUse {
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            }
+
+            for arg in args {
+                collect_expr_io_uses(&arg.value, uses);
+            }
+        }
+        Expr::Try { value, .. } => collect_expr_io_uses(value, uses),
+    }
+}
+
+fn first_string_arg(args: &[CallArg]) -> Option<String> {
+    args.iter().find_map(|arg| {
+        if arg.label.is_some() {
+            return None;
+        }
+
+        let Expr::String { value, .. } = &arg.value else {
+            return None;
+        };
+        Some(value.clone())
+    })
+}
+
+fn single_type_arg_name(type_args: &[TypeExpr]) -> Option<String> {
+    match type_args {
+        [ty] => Some(type_name(ty)),
+        _ => None,
+    }
+}
+
+fn route_param_from_segment(segment: &str) -> RouteSegmentParam {
+    if let Some(name) = segment.strip_prefix(':') {
+        return RouteSegmentParam::Param(RoutePathParam {
+            name: name.to_string(),
+            ty: None,
+        });
+    }
+
+    if !(segment.starts_with('{') || segment.ends_with('}')) {
+        return RouteSegmentParam::None;
+    }
+
+    let Some(inner) = segment
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+    else {
+        return RouteSegmentParam::Malformed(
+            "typed route parameters must use `{name: Type}` inside one path segment",
+        );
+    };
+
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return RouteSegmentParam::Malformed("route parameter braces cannot be empty");
+    }
+
+    let (name, ty) = inner
+        .split_once(':')
+        .map_or((inner, None), |(name, ty)| (name.trim(), Some(ty.trim())));
+
+    if name.is_empty() {
+        return RouteSegmentParam::Malformed("route parameter name cannot be empty");
+    }
+
+    if let Some(ty) = ty {
+        if ty.is_empty() {
+            return RouteSegmentParam::Malformed("typed route parameter type cannot be empty");
+        }
+
+        if !is_simple_type_name(ty) {
+            return RouteSegmentParam::Malformed(
+                "route parameter types currently use a single builtin or local type name",
+            );
+        }
+    }
+
+    RouteSegmentParam::Param(RoutePathParam {
+        name: name.to_string(),
+        ty: ty.map(str::to_string),
+    })
+}
+
 fn is_http_method(method: &str) -> bool {
     matches!(
         method,
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
     )
+}
+
+fn route_method_allows_body(method: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH")
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "String" | "Text" | "Bool" | "Int" | "I64" | "U64" | "F64"
+    )
+}
+
+fn is_simple_type_name(value: &str) -> bool {
+    is_identifier(value)
 }
 
 fn is_identifier(value: &str) -> bool {
@@ -2064,6 +2477,89 @@ mod tests {
     }
 
     #[test]
+    fn checks_typed_route_params_against_handler_reads() {
+        let source = r#"
+            use std.http as Http
+
+            type UserId = opaque U64
+            type OrgId = opaque U64
+            struct AppState {}
+            enum ApiError { Failed }
+
+            fn get(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let id = ctx.param<OrgId>("id")?
+                return Http.Response.ok({ "id": id })
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/users/{id: UserId}" -> get
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_HTTP_0402");
+    }
+
+    #[test]
+    fn requires_body_contract_when_handler_decodes_json() {
+        let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct CreateUserInput { name: String }
+            enum ApiError { Failed }
+
+            fn create(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let input = req.json<CreateUserInput>()?
+                return Http.Response.ok(input)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                post "/users" -> create
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_HTTP_0414");
+    }
+
+    #[test]
+    fn checks_body_contract_against_handler_decode_type() {
+        let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct CreateUserInput { name: String }
+            struct OtherInput { name: String }
+            enum ApiError { Failed }
+
+            fn create(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let input = req.json<OtherInput>()?
+                return Http.Response.ok(input)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                post "/users" body CreateUserInput -> create
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_HTTP_0413");
+    }
+
+    #[test]
     fn rejects_invalid_result_arity() {
         let source = r#"
             use std.http as Http
@@ -2114,7 +2610,7 @@ mod tests {
 
             service Api(state: AppState) {
                 use Http.error_map(map_error)
-                route POST "/users" -> create
+                post "/users" body CreateUserInput -> create
             }
         "#;
 
@@ -2166,7 +2662,7 @@ mod tests {
 
             service Api(state: AppState) {
                 use Http.error_map(map_error)
-                route POST "/users" -> create
+                post "/users" body CreateUserInput -> create
             }
         "#;
 

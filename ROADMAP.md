@@ -100,7 +100,8 @@ Definition of done:
 - `are run examples/users_api` starts a local HTTP server: done
 - `GET /health` returns `200`: done
 - `POST /users` creates an in-memory user: done
-- `GET /users/:id` returns that user or a typed error: done
+- `GET /users/{id: UserId}` returns that user or a typed error: done
+- canonical route contracts with method shorthand, typed path params, and request body declarations: done
 - function body interpreter replaces the temporary users API adapter
 
 ## Milestone 5: Backend Quality Loop

@@ -1,4 +1,7 @@
-use are_ast::{FunctionDecl, Item, Module, RouteDecl, ServiceDecl};
+use are_ast::{
+    Field, FunctionDecl, Item, ModelDecl, ModelField, Module, RouteDecl, ServiceDecl, StructDecl,
+    TypeDecl, TypeExpr,
+};
 use are_interpreter::{
     Host, InterpretError, Value as InterpretedValue, interpret_function_with_host_and_args,
     interpret_function_with_host_and_functions,
@@ -60,7 +63,15 @@ pub struct TestReport {
 pub struct TestRoute {
     pub method: String,
     pub path: String,
+    pub body_type: Option<String>,
+    pub path_params: Vec<TestPathParam>,
     pub handler: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TestPathParam {
+    pub name: String,
+    pub ty: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,7 +132,7 @@ pub fn test_project(path: &Path) -> Result<TestReport, RuntimeError> {
 
     if prepared.routes.has("GET", "/health")
         && prepared.routes.has("POST", "/users")
-        && prepared.routes.has("GET", "/users/:id")
+        && prepared.routes.has("GET", "/users/{id: UserId}")
     {
         scenarios.push(test_users_scenario(&prepared)?);
     }
@@ -194,9 +205,14 @@ fn print_run_summary(manifest: &Manifest, service: &str, routes: &RuntimeRoutes,
 }
 
 fn route_summary_line(route: &RuntimeRoute) -> String {
+    let contract = match &route.body_type {
+        Some(body_type) => format!("{} body {body_type}", route.path),
+        None => route.path.clone(),
+    };
+
     format!(
-        "  {:<6} {:<24} -> {}",
-        route.method, route.path, route.handler
+        "  {:<6} {:<36} -> {}",
+        route.method, contract, route.handler
     )
 }
 
@@ -320,7 +336,7 @@ fn test_users_scenario(prepared: &PreparedProject) -> Result<TestScenario, Runti
     );
     expect_status(&fetched, 200, "GET /users/1")?;
     expect_json_string(&fetched, "name", "Ada Lovelace", "GET /users/1")?;
-    checks.push("GET /users/:id fetches the created user".to_string());
+    checks.push("GET /users/{id: UserId} fetches the created user".to_string());
 
     Ok(TestScenario {
         name: "users API HTTP flow".to_string(),
@@ -385,12 +401,14 @@ struct RuntimeRoutes {
 struct RuntimeRoute {
     method: String,
     path: String,
+    body_type: Option<String>,
     handler: String,
 }
 
 #[derive(Debug, Clone, Default)]
 struct RuntimeFunctions {
     functions: HashMap<String, FunctionDecl>,
+    schemas: RuntimeSchemas,
 }
 
 impl RuntimeRoutes {
@@ -411,13 +429,17 @@ impl RuntimeRoutes {
         })
     }
 
-    fn handler_for(&self, method: &Method, path: &str) -> Option<(&str, HashMap<String, String>)> {
+    fn route_for(
+        &self,
+        method: &Method,
+        path: &str,
+    ) -> Option<(&RuntimeRoute, HashMap<String, String>)> {
         self.routes.iter().find_map(|route| {
             if !method_matches(method, &route.method) {
                 return None;
             }
 
-            match_route(&route.path, path).map(|params| (route.handler.as_str(), params))
+            match_route(&route.path, path).map(|params| (route, params))
         })
     }
 
@@ -433,6 +455,15 @@ impl RuntimeRoutes {
             .map(|route| TestRoute {
                 method: route.method.clone(),
                 path: route.path.clone(),
+                body_type: route.body_type.clone(),
+                path_params: route
+                    .path_params()
+                    .into_iter()
+                    .map(|param| TestPathParam {
+                        name: param.name,
+                        ty: param.ty,
+                    })
+                    .collect(),
                 handler: route.handler.clone(),
             })
             .collect()
@@ -453,7 +484,10 @@ impl RuntimeFunctions {
             })
             .collect();
 
-        Self { functions }
+        Self {
+            functions,
+            schemas: RuntimeSchemas::from_modules(modules),
+        }
     }
 
     fn get(&self, name: &str) -> Option<&FunctionDecl> {
@@ -465,7 +499,17 @@ fn runtime_route(route: &RouteDecl) -> RuntimeRoute {
     RuntimeRoute {
         method: route.method.clone(),
         path: route.path.clone(),
+        body_type: route.body_type.as_ref().map(type_expr_name),
         handler: route.handler.segments.join("."),
+    }
+}
+
+impl RuntimeRoute {
+    fn path_params(&self) -> Vec<RoutePathParam> {
+        self.path
+            .split('/')
+            .filter_map(route_param_from_segment)
+            .collect()
     }
 }
 
@@ -529,6 +573,164 @@ struct User {
     name: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RuntimeSchemas {
+    structs: HashMap<String, StructDecl>,
+    models: HashMap<String, ModelDecl>,
+    aliases: HashMap<String, TypeDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoutePathParam {
+    name: String,
+    ty: Option<String>,
+}
+
+impl RuntimeSchemas {
+    fn from_modules(modules: &[are_project::CheckedFile]) -> Self {
+        let mut schemas = Self::default();
+
+        for item in modules.iter().flat_map(|file| file.module.items.iter()) {
+            match item {
+                Item::Struct(decl) => {
+                    schemas.structs.insert(decl.name.clone(), decl.clone());
+                }
+                Item::Model(decl) => {
+                    schemas.models.insert(decl.name.clone(), decl.clone());
+                }
+                Item::Type(decl) => {
+                    schemas.aliases.insert(decl.name.clone(), decl.clone());
+                }
+                Item::Use(_) | Item::Enum(_) | Item::Function(_) | Item::Service(_) => {}
+            }
+        }
+
+        schemas
+    }
+
+    fn validate_json_body(&self, type_name: &str, body: &str) -> bool {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return false;
+        };
+
+        self.validate_value(type_name, &value)
+    }
+
+    fn validate_value(&self, type_name: &str, value: &serde_json::Value) -> bool {
+        if let Some(alias) = self.aliases.get(type_name) {
+            return self.validate_type_expr(&alias.aliased, value);
+        }
+
+        if let Some(decl) = self.structs.get(type_name) {
+            return self.validate_struct_fields(&decl.fields, value);
+        }
+
+        if let Some(decl) = self.models.get(type_name) {
+            return self.validate_model_fields(&decl.fields, value);
+        }
+
+        validate_primitive(type_name, value)
+    }
+
+    fn validate_type_expr(&self, ty: &TypeExpr, value: &serde_json::Value) -> bool {
+        match ty {
+            TypeExpr::Path { path } => {
+                let Some(type_name) = path.segments.first() else {
+                    return false;
+                };
+
+                if path.segments.len() != 1 {
+                    return true;
+                }
+
+                self.validate_value(type_name, value)
+            }
+            TypeExpr::Generic { base, args, .. } => {
+                if path_is(base, &["Option"]) && args.len() == 1 {
+                    return value.is_null() || self.validate_type_expr(&args[0], value);
+                }
+
+                true
+            }
+            TypeExpr::Option { inner, .. } => {
+                value.is_null() || self.validate_type_expr(inner, value)
+            }
+        }
+    }
+
+    fn validate_struct_fields(&self, fields: &[Field], value: &serde_json::Value) -> bool {
+        let Some(object) = value.as_object() else {
+            return false;
+        };
+
+        fields.iter().all(|field| match object.get(&field.name) {
+            Some(value) => self.validate_type_expr(&field.ty, value),
+            None => type_expr_is_optional(&field.ty),
+        })
+    }
+
+    fn validate_model_fields(&self, fields: &[ModelField], value: &serde_json::Value) -> bool {
+        let Some(object) = value.as_object() else {
+            return false;
+        };
+
+        fields.iter().all(|field| match object.get(&field.name) {
+            Some(value) => self.validate_type_expr(&field.ty, value),
+            None => type_expr_is_optional(&field.ty),
+        })
+    }
+
+    fn decode_path_param(
+        &self,
+        type_name: Option<&str>,
+        name: &str,
+        value: &str,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let Some(type_name) = type_name else {
+            return Ok(serde_json::Value::String(value.to_string()));
+        };
+
+        match self.primitive_root(type_name).as_deref() {
+            Some("U64") => value
+                .parse::<u64>()
+                .map(serde_json::Value::from)
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+            Some("I64" | "Int") => value
+                .parse::<i64>()
+                .map(serde_json::Value::from)
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+            Some("Bool") => value
+                .parse::<bool>()
+                .map(serde_json::Value::from)
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+            Some("F64") => value
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| api_invalid_input(&format!("invalid_{name}"))),
+            _ => Ok(serde_json::Value::String(value.to_string())),
+        }
+    }
+
+    fn primitive_root(&self, type_name: &str) -> Option<String> {
+        if is_primitive_type(type_name) {
+            return Some(type_name.to_string());
+        }
+
+        let alias = self.aliases.get(type_name)?;
+        let TypeExpr::Path { path } = &alias.aliased else {
+            return None;
+        };
+
+        if path.segments.len() != 1 {
+            return None;
+        }
+
+        self.primitive_root(&path.segments[0])
+    }
+}
+
 #[derive(Debug)]
 struct RuntimeResponse {
     status: u16,
@@ -544,15 +746,21 @@ fn runtime_response(
     body: &str,
 ) -> RuntimeResponse {
     let path = strip_query(url);
-    let Some((handler, params)) = routes.handler_for(method, path) else {
+    let Some((route, params)) = routes.route_for(method, path) else {
         return error_response(404, "not_found");
     };
+
+    if let Some(body_type) = &route.body_type
+        && !functions.schemas.validate_json_body(body_type, body)
+    {
+        return error_response(400, "invalid_json");
+    }
 
     interpreted_response(
         state,
         functions,
         routes.error_mapper.as_deref(),
-        handler,
+        &route.handler,
         &params,
         body,
     )
@@ -573,6 +781,7 @@ fn interpreted_response(
         state,
         params,
         request_body: body,
+        schemas: &functions.schemas,
     };
 
     match interpret_function_with_host_and_functions(function, &functions.functions, &mut host) {
@@ -646,6 +855,7 @@ struct UsersApiHost<'a> {
     state: &'a UsersApiState,
     params: &'a HashMap<String, String>,
     request_body: &'a str,
+    schemas: &'a RuntimeSchemas,
 }
 
 impl Host for UsersApiHost<'_> {
@@ -656,7 +866,9 @@ impl Host for UsersApiHost<'_> {
         let value = serde_json::from_str::<serde_json::Value>(self.request_body)
             .map_err(|_| api_invalid_input("invalid_json"))?;
 
-        if type_name == Some("CreateUserInput") && !is_create_user_input(&value) {
+        if let Some(type_name) = type_name
+            && !self.schemas.validate_value(type_name, &value)
+        {
             return Err(api_invalid_input("invalid_json"));
         }
 
@@ -722,17 +934,10 @@ impl Host for UsersApiHost<'_> {
         name: &str,
     ) -> Result<serde_json::Value, InterpretError> {
         let Some(value) = self.params.get(name) else {
-            return Err(api_invalid_input("missing_id"));
+            return Err(api_invalid_input(&format!("missing_{name}")));
         };
 
-        if type_name == Some("UserId") {
-            let id = value
-                .parse::<u64>()
-                .map_err(|_| api_invalid_input("invalid_id"))?;
-            return Ok(serde_json::json!(id));
-        }
-
-        Ok(serde_json::Value::String(value.clone()))
+        self.schemas.decode_path_param(type_name, name, value)
     }
 
     fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
@@ -751,11 +956,6 @@ impl Host for UsersApiHost<'_> {
 
         Ok(serde_json::to_value(user).expect("user serializes"))
     }
-}
-
-fn is_create_user_input(value: &serde_json::Value) -> bool {
-    value.get("email").is_some_and(serde_json::Value::is_string)
-        && value.get("name").is_some_and(serde_json::Value::is_string)
 }
 
 fn error_response(status: u16, error: &str) -> RuntimeResponse {
@@ -818,14 +1018,86 @@ fn match_route(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
 
     let mut params = HashMap::new();
     for (pattern_part, path_part) in pattern_parts.iter().zip(path_parts) {
-        if let Some(name) = pattern_part.strip_prefix(':') {
-            params.insert(name.to_string(), path_part.to_string());
+        if let Some(param) = route_param_from_segment(pattern_part) {
+            params.insert(param.name, path_part.to_string());
         } else if pattern_part != &path_part {
             return None;
         }
     }
 
     Some(params)
+}
+
+fn route_param_from_segment(segment: &str) -> Option<RoutePathParam> {
+    if let Some(name) = segment.strip_prefix(':') {
+        return Some(RoutePathParam {
+            name: name.to_string(),
+            ty: None,
+        });
+    }
+
+    let inner = segment
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))?
+        .trim();
+    let (name, ty) = inner
+        .split_once(':')
+        .map_or((inner, None), |(name, ty)| (name.trim(), Some(ty.trim())));
+
+    Some(RoutePathParam {
+        name: name.to_string(),
+        ty: ty.map(str::to_string),
+    })
+}
+
+fn type_expr_name(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Path { path } => path.segments.join("."),
+        TypeExpr::Generic { base, args, .. } => {
+            let args = args
+                .iter()
+                .map(type_expr_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}<{args}>", base.segments.join("."))
+        }
+        TypeExpr::Option { inner, .. } => format!("{}?", type_expr_name(inner)),
+    }
+}
+
+fn path_is(path: &are_ast::Path, expected: &[&str]) -> bool {
+    path.segments.len() == expected.len()
+        && path
+            .segments
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+}
+
+fn type_expr_is_optional(ty: &TypeExpr) -> bool {
+    match ty {
+        TypeExpr::Option { .. } => true,
+        TypeExpr::Generic { base, .. } => path_is(base, &["Option"]),
+        TypeExpr::Path { .. } => false,
+    }
+}
+
+fn validate_primitive(type_name: &str, value: &serde_json::Value) -> bool {
+    match type_name {
+        "String" | "Text" => value.is_string(),
+        "Bool" => value.is_boolean(),
+        "Int" | "I64" => value.as_i64().is_some(),
+        "U64" => value.as_u64().is_some(),
+        "F64" => value.as_f64().is_some(),
+        _ => false,
+    }
+}
+
+fn is_primitive_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "String" | "Text" | "Bool" | "Int" | "I64" | "U64" | "F64"
+    )
 }
 
 #[cfg(test)]
@@ -842,12 +1114,23 @@ mod tests {
     fn matches_named_route_params() {
         let params = match_route("/users/:id", "/users/42").expect("route matches");
         assert_eq!(params.get("id").expect("id"), "42");
+
+        let params = match_route("/users/{id: UserId}", "/users/42").expect("route matches");
+        assert_eq!(params.get("id").expect("id"), "42");
     }
 
     #[test]
     fn formats_route_summary_lines() {
-        let line = route_summary_line(&route("POST", "/users", "create_user"));
-        assert_eq!(line, "  POST   /users                   -> create_user");
+        let line = route_summary_line(&route(
+            "POST",
+            "/users",
+            Some("CreateUserInput"),
+            "create_user",
+        ));
+        assert_eq!(
+            line,
+            "  POST   /users body CreateUserInput          -> create_user"
+        );
     }
 
     #[test]
@@ -855,9 +1138,9 @@ mod tests {
         let state = UsersApiState::default();
         let routes = RuntimeRoutes {
             routes: vec![
-                route("GET", "/health", "health"),
-                route("POST", "/users", "create_user"),
-                route("GET", "/users/:id", "get_user"),
+                route("GET", "/health", None, "health"),
+                route("POST", "/users", Some("CreateUserInput"), "create_user"),
+                route("GET", "/users/{id: UserId}", None, "get_user"),
             ],
             error_mapper: Some("map_error".to_string()),
         };
@@ -933,10 +1216,16 @@ mod tests {
         RuntimeFunctions::from_modules(&check.modules)
     }
 
-    fn route(method: &str, path: &str, handler: &str) -> super::RuntimeRoute {
+    fn route(
+        method: &str,
+        path: &str,
+        body_type: Option<&str>,
+        handler: &str,
+    ) -> super::RuntimeRoute {
         super::RuntimeRoute {
             method: method.to_string(),
             path: path.to_string(),
+            body_type: body_type.map(str::to_string),
             handler: handler.to_string(),
         }
     }

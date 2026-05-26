@@ -294,12 +294,14 @@ impl<'a> Parser<'a> {
             if self.match_keyword(Keyword::Use).is_some() {
                 uses.push(self.parse_service_use()?);
             } else if self.match_keyword(Keyword::Route).is_some() {
-                routes.push(self.parse_route()?);
+                routes.push(self.parse_route_after_route_keyword()?);
+            } else if self.check_route_method() {
+                routes.push(self.parse_route_shorthand()?);
             } else {
                 self.error_at_current(
                     "E_PARSE_0002",
                     "expected service item",
-                    "service bodies currently accept only `use` and `route` items",
+                    "service bodies accept `use`, `route`, and HTTP method items such as `get` or `post`",
                 );
                 self.advance();
             }
@@ -351,17 +353,32 @@ impl<'a> Parser<'a> {
         Some(args)
     }
 
-    fn parse_route(&mut self) -> Option<RouteDecl> {
+    fn parse_route_after_route_keyword(&mut self) -> Option<RouteDecl> {
         let start = self.previous_range()?.start;
         let method = self.expect_identifier("expected HTTP method after `route`")?;
+        self.parse_route_contract(start, &method)
+    }
+
+    fn parse_route_shorthand(&mut self) -> Option<RouteDecl> {
+        let method_token = self.advance();
+        self.parse_route_contract(method_token.range.start, &method_token.lexeme)
+    }
+
+    fn parse_route_contract(&mut self, start: Position, method: &str) -> Option<RouteDecl> {
         let path_token = self.expect_kind(&TokenKind::String, "expected route path string")?;
+        let body_type = if self.match_identifier("body").is_some() {
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
         self.expect_kind(&TokenKind::Arrow, "expected `->` before route handler")?;
         let handler = self.parse_path()?;
         let end = handler.range.end;
 
         Some(RouteDecl {
-            method,
+            method: method.to_ascii_uppercase(),
             path: unquote(&path_token.lexeme),
+            body_type,
             handler,
             range: SourceRange::new(start, end),
         })
@@ -891,6 +908,21 @@ impl<'a> Parser<'a> {
             .is_some_and(|token| &token.kind == kind)
     }
 
+    fn match_identifier(&mut self, expected: &str) -> Option<SourceRange> {
+        if self.peek().kind == TokenKind::Identifier && self.peek().lexeme == expected {
+            return Some(self.advance().range);
+        }
+        None
+    }
+
+    fn check_route_method(&self) -> bool {
+        self.peek().kind == TokenKind::Identifier
+            && matches!(
+                self.peek().lexeme.to_ascii_uppercase().as_str(),
+                "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+            )
+    }
+
     fn match_operator(&mut self, expected: &str) -> bool {
         if self.check_operator(expected) {
             self.advance();
@@ -1127,5 +1159,33 @@ mod tests {
         assert_eq!(service.uses[0].args[0].segments, ["map_error"]);
         assert_eq!(service.routes[0].method, "GET");
         assert_eq!(service.routes[0].path, "/health");
+    }
+
+    #[test]
+    fn parses_method_shorthand_route_contracts() {
+        let source = r#"
+            service UsersApi(state: AppState) {
+                post "/users" body CreateUserInput -> create_user
+                get "/users/{id: UserId}" -> get_user
+            }
+        "#;
+        let file = Path::new("test.are");
+        let (tokens, lex_diagnostics) = lex_source(file, source);
+        assert!(lex_diagnostics.is_empty());
+
+        let (module, diagnostics) = parse_tokens(file, &tokens);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+        let module = module.expect("module parses");
+        let Some(Item::Service(service)) = module.items.first() else {
+            panic!("expected service");
+        };
+
+        assert_eq!(service.routes[0].method, "POST");
+        assert_eq!(service.routes[0].path, "/users");
+        assert!(service.routes[0].body_type.is_some());
+        assert_eq!(service.routes[1].method, "GET");
+        assert_eq!(service.routes[1].path, "/users/{id: UserId}");
+        assert!(service.routes[1].body_type.is_none());
     }
 }

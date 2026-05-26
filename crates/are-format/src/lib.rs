@@ -269,10 +269,13 @@ fn format_service(output: &mut String, decl: &ServiceDecl) {
 
     for route in &decl.routes {
         output.push_str(INDENT);
-        output.push_str("route ");
-        output.push_str(&route.method);
+        output.push_str(&route.method.to_ascii_lowercase());
         output.push(' ');
         output.push_str(&quote_string(&route.path));
+        if let Some(body_type) = &route.body_type {
+            output.push_str(" body ");
+            output.push_str(&format_type_expr(body_type));
+        }
         output.push_str(" -> ");
         output.push_str(&format_path(&route.handler));
         output.push('\n');
@@ -571,10 +574,26 @@ fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
 }
 
 service HelloApi(state: AppState) {
-    route GET "/ping" -> ping
+    get "/ping" -> ping
 }
 "#
         );
+    }
+
+    #[test]
+    fn formats_route_contracts() {
+        let source = r#"use std.http as Http
+struct AppState{}
+struct CreateUserInput{name:String}
+fn create_user(ctx:Http.Context<AppState>,req:Http.Request)->Http.Response{return Http.Response.ok({})}
+fn get_user(ctx:Http.Context<AppState>,req:Http.Request)->Http.Response{return Http.Response.ok({})}
+service UsersApi(state:AppState){route POST "/users" body CreateUserInput -> create_user
+route GET "/users/{id: UserId}" -> get_user}
+"#;
+
+        let formatted = format_source(Path::new("test.are"), source).expect("formats");
+        assert!(formatted.contains(r#"post "/users" body CreateUserInput -> create_user"#));
+        assert!(formatted.contains(r#"get "/users/{id: UserId}" -> get_user"#));
     }
 
     #[test]

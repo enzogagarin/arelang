@@ -83,13 +83,13 @@ enum ApiError {
 
 ```are
 service UsersApi(state: AppState) {
-    route GET "/health" -> health
-    route POST "/users" -> create_user
-    route GET "/users/:id" -> get_user
+    get "/health" -> health
+    post "/users" body CreateUserInput -> create_user
+    get "/users/{id: UserId}" -> get_user
 }
 ```
 
-The compiler should build a route registry from this declaration.
+The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts and typed path parameters are checked against handler code: `body CreateUserInput` must line up with `req.json<CreateUserInput>()`, and `{id: UserId}` must line up with `ctx.param<UserId>("id")`.
 
 ## v0 Keywords
 

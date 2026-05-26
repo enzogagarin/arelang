@@ -161,6 +161,10 @@ impl<'a> Resolver<'a> {
 
         let mut routes = HashSet::new();
         for route in &decl.routes {
+            if let Some(body_type) = &route.body_type {
+                self.resolve_type_expr(body_type);
+            }
+
             let key = (route.method.as_str(), route.path.as_str());
             if !routes.insert(key) {
                 self.diagnostics.push(

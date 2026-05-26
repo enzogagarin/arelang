@@ -66,7 +66,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
-- typecheck function signatures, generic arity, route handlers, and HTTP error mappers
+- typecheck function signatures, generic arity, route handlers, route body contracts, typed path params, and HTTP error mappers
 - emit human or JSON diagnostics
 
 Current `are fmt` behavior:
@@ -83,6 +83,7 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
+- validate route-level body and path contracts at the host boundary
 - start the embedded HTTP MVP runtime
 
 Current `are test` behavior:
@@ -110,8 +111,8 @@ Human diagnostic output should render the same payload with a source snippet:
 error[E_RESOLVE_0002]: unknown route handler `create_usr`
   --> users_api/main.are:61:28
    |
-61 |     route POST "/users" -> create_usr
-   |                            ^^^^^^^^^^
+61 |     post "/users" body CreateUserInput -> create_usr
+   |                                           ^^^^^^^^^^
    |
 note: declare a function with this name before wiring it in a service route
 help: did you mean `create_user`?

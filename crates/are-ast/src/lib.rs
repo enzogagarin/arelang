@@ -285,6 +285,7 @@ pub struct ServiceUse {
 pub struct RouteDecl {
     pub method: String,
     pub path: String,
+    pub body_type: Option<TypeExpr>,
     pub handler: Path,
     pub range: SourceRange,
 }

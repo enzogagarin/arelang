@@ -320,9 +320,13 @@ fn print_test_report(report: &TestReport) {
     println!("service {}", report.service);
     println!("routes:");
     for route in &report.routes {
+        let contract = match &route.body_type {
+            Some(body_type) => format!("{} body {body_type}", route.path),
+            None => route.path.clone(),
+        };
         println!(
-            "  {:<6} {:<24} -> {}",
-            route.method, route.path, route.handler
+            "  {:<6} {:<36} -> {}",
+            route.method, contract, route.handler
         );
     }
 
@@ -417,7 +421,7 @@ fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {{
 }}
 
 service {service_name}(state: AppState) {{
-    route GET "/ping" -> ping
+    get "/ping" -> ping
 }}
 "#
     )
@@ -483,9 +487,9 @@ fn map_error(err: ApiError) -> Http.Response {{
 service {service_name}(state: AppState) {{
     use Http.error_map(map_error)
 
-    route GET "/health" -> health
-    route POST "/users" -> create_user
-    route GET "/users/:id" -> get_user
+    get "/health" -> health
+    post "/users" body CreateUserInput -> create_user
+    get "/users/{{id: UserId}}" -> get_user
 }}
 "#
     )
@@ -578,7 +582,7 @@ mod tests {
         let source = minimal_source("HelloApi");
         assert!(source.contains("fn ping"));
         assert!(source.contains("service HelloApi"));
-        assert!(source.contains(r#"route GET "/ping" -> ping"#));
+        assert!(source.contains(r#"get "/ping" -> ping"#));
     }
 
     #[test]
@@ -588,6 +592,7 @@ mod tests {
         assert!(source.contains("fn create_user"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
-        assert!(source.contains(r#"route POST "/users" -> create_user"#));
+        assert!(source.contains(r#"post "/users" body CreateUserInput -> create_user"#));
+        assert!(source.contains(r#"get "/users/{id: UserId}" -> get_user"#));
     }
 }

@@ -15,7 +15,7 @@ Expected result:
 - starts a local server
 - exposes `/health`
 - creates users with `POST /users`
-- fetches users with `GET /users/:id`
+- fetches users with `GET /users/{id: UserId}`
 - uses JSON request and response bodies
 - returns structured API errors
 
@@ -23,6 +23,7 @@ Current implementation status:
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations
+- canonical service syntax supports `get`, `post`, typed path params, and route body contracts
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
 - `are run` prints the service URL and route table before accepting requests
@@ -64,9 +65,9 @@ The context carries:
 
 ```are
 service UsersApi(state: AppState) {
-    route GET "/health" -> health
-    route POST "/users" -> create_user
-    route GET "/users/:id" -> get_user
+    get "/health" -> health
+    post "/users" body CreateUserInput -> create_user
+    get "/users/{id: UserId}" -> get_user
 }
 ```
 
@@ -76,7 +77,8 @@ The compiler should check:
 - handler has a valid HTTP signature
 - handler returns `Http.Response` or `Result<Http.Response, E>`
 - result-returning handlers have a compatible `Http.error_map`
-- route params are available to the handler through `ctx.param<T>("name")`
+- typed route params such as `{id: UserId}` are read through matching `ctx.param<UserId>("id")`
+- body contracts such as `body CreateUserInput` are decoded through matching `req.json<CreateUserInput>()`
 - duplicate method/path pairs are rejected
 
 ## Response Helpers

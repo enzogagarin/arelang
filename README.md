@@ -34,6 +34,7 @@ Native codegen, arena escape checking, package publishing, database adapters, an
 are fmt
 are check --json
 are inspect --json
+are openapi examples/users_api
 are run examples/users_api
 are test
 are audit
@@ -52,6 +53,7 @@ From the repository root, the current demos are intentionally a small set of com
 ./are fmt scratch_api --check
 ./are check scratch_api
 ./are inspect scratch_api
+./are openapi scratch_api
 ./are audit scratch_api
 ./are test scratch_api
 ./are run scratch_api
@@ -65,6 +67,7 @@ From the repository root, the current demos are intentionally a small set of com
 ./are check examples/users_api --json
 ./are inspect examples/users_api
 ./are inspect examples/users_api --json
+./are openapi examples/users_api > openapi.json
 ./are audit examples/users_api
 ./are audit examples/users_api --json
 ./are test examples/users_api
@@ -100,7 +103,7 @@ are run examples/hello_api
 
 When a server starts, `are run` prints the service name, package, listen URL, and route table so the project is immediately curlable.
 
-`scripts/mvp-smoke.sh` is the current MVP health check. It runs Rust formatting, Arelang formatting, Rust tests, clippy, `are check`, `are inspect`, `are audit`, `are test`, generated minimal and users-template APIs, real HTTP servers on high local ports, and response verification with `curl`.
+`scripts/mvp-smoke.sh` is the current MVP health check. It runs Rust formatting, Arelang formatting, Rust tests, clippy, `are check`, `are inspect`, `are openapi`, `are audit`, `are test`, generated minimal and users-template APIs, real HTTP servers on high local ports, and response verification with `curl`.
 
 `are fmt` rewrites `.are` files into the canonical Arelang style. `--check` verifies formatting without writing, which is what CI uses. The first formatter intentionally refuses to rewrite files with comments until comment-preserving formatting is implemented.
 
@@ -111,6 +114,8 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, response type, success status, handler binding, local type/model/enum schemas, and error mapper. `are run` uses it to route and validate responses; `are test --json` exposes the same route contract data for tools.
 
 `are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface, including aliases, structs, models, enum variants, model collections, and primary/unique model field metadata. This is the seed for OpenAPI/client generation and lets Arelang expose backend contracts without making users read the runtime internals.
+
+`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params to OpenAPI parameters, and Arelang aliases, structs, models, and enums to `components.schemas`.
 
 `are audit` is the first production-shape safety loop. It runs static checks, builds the HTTP contract manifest, verifies every route has a response type and success status, and checks `[capabilities]` in `are.toml` against the server listen address and the MVP least-privilege defaults. It fails on missing required listen capability, missing capability manifest, static check failures, or process spawning being enabled.
 

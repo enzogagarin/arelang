@@ -2,7 +2,7 @@ use are_audit::{AuditReport, AuditStatus, audit_project};
 use are_diagnostics::Diagnostic;
 use are_format::format_source;
 use are_http_runtime::{
-    HttpContractManifest, TestReport, inspect_project, run_project, test_project,
+    HttpContractManifest, TestReport, inspect_project, openapi_project, run_project, test_project,
 };
 use are_project::check_path;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -95,6 +95,14 @@ enum Command {
         json: bool,
     },
 
+    /// Export `OpenAPI` 3.1 JSON for the checked HTTP contract.
+    #[command(name = "openapi")]
+    OpenApi {
+        /// Project directory to export.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+
     /// Audit backend safety and capability manifest checks.
     Audit {
         /// Project directory to audit.
@@ -167,6 +175,7 @@ fn main() -> ExitCode {
         }
         Command::Test { path, json } => run_test(&path, json),
         Command::Inspect { path, json } => run_inspect(&path, json),
+        Command::OpenApi { path } => run_openapi(&path),
         Command::Audit { path, json } => run_audit(&path, json),
     }
 }
@@ -199,6 +208,7 @@ fn create_project(
     println!("next:");
     println!("  ./are check {}", path.display());
     println!("  ./are inspect {}", path.display());
+    println!("  ./are openapi {}", path.display());
     println!("  ./are audit {}", path.display());
     println!("  ./are test {}", path.display());
     println!("  ./are run {}", path.display());
@@ -397,6 +407,27 @@ fn run_inspect(path: &Path, json: bool) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_openapi(path: &Path) -> ExitCode {
+    let document = match openapi_project(path) {
+        Ok(document) => document,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match serde_json::to_string_pretty(&document) {
+        Ok(encoded) => {
+            println!("{encoded}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("failed to encode OpenAPI JSON: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn print_contract_manifest(manifest: &HttpContractManifest) {

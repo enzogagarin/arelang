@@ -2,6 +2,7 @@ mod contracts;
 mod errors;
 mod functions;
 mod host;
+mod openapi;
 mod request;
 mod response;
 mod scenarios;
@@ -14,6 +15,7 @@ mod tests;
 
 use contracts::find_single_service;
 use functions::RuntimeFunctions;
+use openapi::openapi_document;
 use scenarios::{test_ping_scenario, test_users_scenario};
 use serde::Serialize;
 use server::{print_run_summary, run_http_server};
@@ -119,6 +121,17 @@ pub fn run_project(path: &Path) -> Result<(), RuntimeError> {
 /// [`run_project`].
 pub fn inspect_project(path: &Path) -> Result<HttpContractManifest, RuntimeError> {
     Ok(prepare_project(path)?.contracts)
+}
+
+/// Export the checked HTTP project surface as an `OpenAPI` 3.1 JSON document.
+///
+/// # Errors
+///
+/// Returns an error if the project fails the same preparation path as
+/// [`run_project`].
+pub fn openapi_project(path: &Path) -> Result<serde_json::Value, RuntimeError> {
+    let prepared = prepare_project(path)?;
+    Ok(openapi_document(&prepared.manifest, &prepared.contracts))
 }
 
 /// Run the MVP project test loop without opening a TCP listener.

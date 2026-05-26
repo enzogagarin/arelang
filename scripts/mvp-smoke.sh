@@ -126,6 +126,10 @@ run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/users_api" --json >"$TMP_DIR/use
 assert_file_contains "$TMP_DIR/users_inspect.json" '"schemas"' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"collection": "users"' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"primary": true' "users inspect contract"
+run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" >"$TMP_DIR/users_openapi.json"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"openapi": "3.1.0"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/{id}"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"#/components/schemas/User"' "users OpenAPI document"
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" test "$ROOT_DIR/examples/hello_api" --json
@@ -137,6 +141,7 @@ run "$ROOT_DIR/are" new "$GENERATED" --name generated-api --port 18092
 run "$ROOT_DIR/are" fmt "$GENERATED" --check
 run "$ROOT_DIR/are" check "$GENERATED" --json
 run "$ROOT_DIR/are" inspect "$GENERATED" --json
+run "$ROOT_DIR/are" openapi "$GENERATED"
 run "$ROOT_DIR/are" audit "$GENERATED" --json
 run "$ROOT_DIR/are" test "$GENERATED" --json
 start_server generated "$GENERATED"
@@ -151,6 +156,7 @@ run "$ROOT_DIR/are" new "$GENERATED_USERS" --name generated-users-api --template
 run "$ROOT_DIR/are" fmt "$GENERATED_USERS" --check
 run "$ROOT_DIR/are" check "$GENERATED_USERS" --json
 run "$ROOT_DIR/are" inspect "$GENERATED_USERS" --json
+run "$ROOT_DIR/are" openapi "$GENERATED_USERS"
 run "$ROOT_DIR/are" audit "$GENERATED_USERS" --json
 run "$ROOT_DIR/are" test "$GENERATED_USERS" --json
 start_server generated_users "$GENERATED_USERS"

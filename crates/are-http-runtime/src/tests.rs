@@ -8,7 +8,7 @@ use crate::request::RuntimeRequest;
 use crate::response::runtime_response;
 use crate::schemas::RuntimeSchemas;
 use crate::store::RuntimeState;
-use crate::test_project;
+use crate::{openapi_project, test_project};
 use are_ast::{ModelDecl, ModelField, ModelFieldAttr, Path as AstPath, TypeExpr};
 use are_diagnostics::{Position, SourceRange};
 use are_interpreter::Host;
@@ -225,6 +225,45 @@ fn tests_users_api_project() {
     assert_eq!(report.routes.len(), 3);
     assert_eq!(report.scenarios.len(), 1);
     assert_eq!(report.scenarios[0].name, "users API HTTP flow");
+}
+
+#[test]
+fn exports_users_api_openapi_document() {
+    let document = openapi_project(Path::new("../../examples/users_api")).expect("openapi");
+
+    assert_eq!(document["openapi"], "3.1.0");
+    assert_eq!(document["info"]["title"], "users-api");
+    assert_eq!(document["info"]["x-are-service"], "UsersApi");
+    assert_eq!(document["servers"][0]["url"], "http://127.0.0.1:8080");
+
+    let create_user = &document["paths"]["/users"]["post"];
+    assert_eq!(create_user["operationId"], "create_user");
+    assert_eq!(
+        create_user["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/CreateUserInput"
+    );
+    assert_eq!(
+        create_user["responses"]["201"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/User"
+    );
+
+    let get_user_param = &document["paths"]["/users/{id}"]["get"]["parameters"][0];
+    assert_eq!(get_user_param["name"], "id");
+    assert_eq!(
+        get_user_param["schema"]["$ref"],
+        "#/components/schemas/UserId"
+    );
+
+    let user = &document["components"]["schemas"]["User"];
+    assert_eq!(user["x-are-collection"], "users");
+    assert_eq!(user["properties"]["id"]["x-are-primary"], true);
+    assert_eq!(user["properties"]["email"]["x-are-unique"], true);
+
+    let api_error = &document["components"]["schemas"]["ApiError"];
+    assert_eq!(
+        api_error["oneOf"][0]["properties"]["variant"]["const"],
+        "InvalidInput"
+    );
 }
 
 fn users_api_functions() -> RuntimeFunctions {

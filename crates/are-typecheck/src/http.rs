@@ -13,6 +13,7 @@ impl TypeChecker<'_> {
         for route in &decl.routes {
             let path_params = self.check_route_shape(route);
             self.check_route_body_contract(route);
+            self.check_route_query_contract(route);
             self.check_route_response_contract(route);
 
             let Some(handler) = route
@@ -147,6 +148,25 @@ impl TypeChecker<'_> {
         }
     }
 
+    fn check_route_query_contract(&mut self, route: &RouteDecl) {
+        let Some(query_type) = &route.query_type else {
+            return;
+        };
+
+        if !self.is_local_payload_type(query_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0430",
+                &self.file,
+                query_type.range(),
+                format!(
+                    "route query `{}` is not a local payload type",
+                    type_name(query_type)
+                ),
+                "query contracts should name a local struct such as `SearchUsersQuery`",
+            ));
+        }
+    }
+
     fn check_route_response_contract(&mut self, route: &RouteDecl) {
         if let Some(response_type) = &route.response_type
             && !self.is_response_payload_type(response_type)
@@ -185,6 +205,7 @@ impl TypeChecker<'_> {
         let uses = collect_handler_io_uses(handler);
         self.check_route_path_param_contract(route, handler, path_params, &uses);
         self.check_route_body_decode_contract(route, handler, &uses);
+        self.check_route_query_decode_contract(route, handler, &uses);
     }
 
     fn check_route_path_param_contract(
@@ -314,6 +335,61 @@ impl TypeChecker<'_> {
                     handler.name
                 ),
                 "declare the route body as `post \"/path\" body Payload -> handler`",
+            ));
+        }
+    }
+
+    fn check_route_query_decode_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        uses: &HandlerIoUses,
+    ) {
+        if let Some(query_type) = &route.query_type {
+            let expected = type_name(query_type);
+            if uses.request_queries.is_empty() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0431",
+                    &self.file,
+                    route.range,
+                    format!(
+                        "route query `{expected}` is not decoded by handler `{}`",
+                        handler.name
+                    ),
+                    "decode the declared query with `req.query<T>()` inside the route handler",
+                ));
+                return;
+            }
+
+            if !uses
+                .request_queries
+                .iter()
+                .any(|query_use| query_use.ty.as_deref() == Some(expected.as_str()))
+            {
+                let actual = uses
+                    .request_queries
+                    .iter()
+                    .filter_map(|query_use| query_use.ty.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0432",
+                    &self.file,
+                    route.range,
+                    format!("route query `{expected}` does not match handler decode `{actual}`"),
+                    "the service route query contract and req.query<T>() type must match",
+                ));
+            }
+        } else if let Some(query_use) = uses.request_queries.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0433",
+                &self.file,
+                query_use.range,
+                format!(
+                    "handler `{}` decodes query params without a route query contract",
+                    handler.name
+                ),
+                "declare the route query as `get \"/path\" query QueryPayload -> handler`",
             ));
         }
     }
@@ -730,10 +806,17 @@ struct RequestBodyUse {
     range: SourceRange,
 }
 
+#[derive(Debug, Clone)]
+struct RequestQueryUse {
+    ty: Option<String>,
+    range: SourceRange,
+}
+
 #[derive(Debug, Default)]
 struct HandlerIoUses {
     path_params: Vec<PathParamUse>,
     request_bodies: Vec<RequestBodyUse>,
+    request_queries: Vec<RequestQueryUse>,
 }
 
 fn collect_handler_io_uses(function: &FunctionDecl) -> HandlerIoUses {
@@ -792,6 +875,11 @@ fn collect_expr_io_uses(expr: &Expr, uses: &mut HandlerIoUses) {
                 });
             } else if callee_name == "req.json" {
                 uses.request_bodies.push(RequestBodyUse {
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            } else if callee_name == "req.query" {
+                uses.request_queries.push(RequestQueryUse {
                     ty: single_type_arg_name(type_args),
                     range: *range,
                 });

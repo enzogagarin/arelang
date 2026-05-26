@@ -30,6 +30,7 @@ fn matches_named_route_params() {
 fn runtime_request_exposes_path_without_query() {
     let request = RuntimeRequest::new(Method::Get, "/users/1?expand=posts", "");
     assert_eq!(request.path(), "/users/1");
+    assert_eq!(request.query(), "expand=posts");
 }
 
 #[test]
@@ -57,7 +58,7 @@ fn builds_http_contract_manifest_from_service() {
         HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
 
     assert_eq!(contracts.service, "UsersApi");
-    assert_eq!(contracts.routes.len(), 3);
+    assert_eq!(contracts.routes.len(), 4);
     assert!(contracts.has("POST", "/users"));
     assert_eq!(contracts.error_mapper.as_deref(), Some("map_error"));
     assert_contract_schemas(&contracts);
@@ -70,6 +71,17 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(create_user.body_type.as_deref(), Some("CreateUserInput"));
     assert_eq!(create_user.response_type.as_deref(), Some("User"));
     assert_eq!(create_user.status, Some(201));
+
+    let search_users = contracts
+        .routes
+        .iter()
+        .find(|route| route.method == "GET" && route.path == "/users/search")
+        .expect("GET /users/search");
+    assert_eq!(search_users.query_type.as_deref(), Some("SearchUsersQuery"));
+    assert_eq!(
+        search_users.response_type.as_deref(),
+        Some("SearchUsersResponse")
+    );
 
     let get_user = contracts
         .routes
@@ -162,6 +174,27 @@ fn handles_users_api_flow() {
 }
 
 #[test]
+fn rejects_missing_users_api_query_params() {
+    let state = RuntimeState::default();
+    let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
+    assert!(check.ok(), "{:#?}", check.diagnostics);
+    let service = find_single_service(&check.modules).expect("single service");
+    let contracts =
+        HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
+    let functions = RuntimeFunctions::from_modules(&check.modules);
+
+    let missing = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/search", ""),
+    );
+
+    assert_eq!(missing.status, 400);
+    assert_eq!(missing.body["error"], "missing_email");
+}
+
+#[test]
 fn runtime_store_uses_model_collection_contracts() {
     let schemas = RuntimeSchemas {
         models: [("Post".to_string(), model_decl("Post", "title"))].into(),
@@ -173,6 +206,7 @@ fn runtime_store_uses_model_collection_contracts() {
         state: &state,
         params: &params,
         request_body: "",
+        query: "",
         schemas: &schemas,
     };
 
@@ -222,7 +256,7 @@ fn tests_users_api_project() {
     let report = test_project(Path::new("../../examples/users_api")).expect("project tests");
     assert_eq!(report.package, "users-api");
     assert_eq!(report.service, "UsersApi");
-    assert_eq!(report.routes.len(), 3);
+    assert_eq!(report.routes.len(), 4);
     assert_eq!(report.scenarios.len(), 1);
     assert_eq!(report.scenarios[0].name, "users API HTTP flow");
 }
@@ -252,6 +286,15 @@ fn exports_users_api_openapi_document() {
     assert_eq!(
         get_user_param["schema"]["$ref"],
         "#/components/schemas/UserId"
+    );
+
+    let search_query_param = &document["paths"]["/users/search"]["get"]["parameters"][0];
+    assert_eq!(search_query_param["name"], "email");
+    assert_eq!(search_query_param["in"], "query");
+    assert_eq!(search_query_param["required"], true);
+    assert_eq!(
+        search_query_param["schema"]["$ref"],
+        "#/components/schemas/Email"
     );
 
     let user = &document["components"]["schemas"]["User"];
@@ -284,6 +327,7 @@ fn route(
         method: method.to_string(),
         path: path.to_string(),
         body_type: body_type.map(str::to_string),
+        query_type: None,
         response_type: response_type.map(str::to_string),
         status,
         path_params: Vec::new(),

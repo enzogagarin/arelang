@@ -286,6 +286,7 @@ pub struct RouteDecl {
     pub method: String,
     pub path: String,
     pub body_type: Option<TypeExpr>,
+    pub query_type: Option<TypeExpr>,
     pub handler: Path,
     pub response_type: Option<TypeExpr>,
     pub status: Option<RouteStatus>,

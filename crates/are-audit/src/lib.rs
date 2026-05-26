@@ -321,7 +321,7 @@ mod tests {
 
         assert!(report.ok, "{:#?}", report.checks);
         assert_eq!(report.package, "users-api");
-        assert_eq!(report.http.expect("http surface").routes, 3);
+        assert_eq!(report.http.expect("http surface").routes, 4);
         assert!(
             report
                 .checks

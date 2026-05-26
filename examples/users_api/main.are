@@ -15,6 +15,14 @@ struct HealthResponse {
     status: String
 }
 
+struct SearchUsersQuery {
+    email: Email
+}
+
+struct SearchUsersResponse {
+    email: Email
+}
+
 model User {
     id: UserId primary
     email: Email unique
@@ -43,6 +51,11 @@ fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, A
     return user
 }
 
+fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SearchUsersResponse, ApiError> {
+    let query = req.query<SearchUsersQuery>()?
+    return { "email": query.email }
+}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -62,5 +75,6 @@ service UsersApi(state: AppState) {
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }

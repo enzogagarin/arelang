@@ -67,24 +67,9 @@ fn operation(route: &HttpRouteContract, contracts: &HttpContractManifest) -> Val
     );
     operation.insert("tags".to_string(), json!([contracts.service]));
 
-    if !route.path_params.is_empty() {
-        operation.insert(
-            "parameters".to_string(),
-            Value::Array(
-                route
-                    .path_params
-                    .iter()
-                    .map(|param| {
-                        json!({
-                            "name": param.name,
-                            "in": "path",
-                            "required": true,
-                            "schema": param.ty.as_deref().map_or_else(string_schema, type_schema),
-                        })
-                    })
-                    .collect(),
-            ),
-        );
+    let parameters = parameters(route, &contracts.schemas);
+    if !parameters.is_empty() {
+        operation.insert("parameters".to_string(), Value::Array(parameters));
     }
 
     if let Some(body_type) = &route.body_type {
@@ -103,6 +88,64 @@ fn operation(route: &HttpRouteContract, contracts: &HttpContractManifest) -> Val
 
     operation.insert("responses".to_string(), responses(route));
     Value::Object(operation)
+}
+
+fn parameters(route: &HttpRouteContract, schemas: &HttpSchemaManifest) -> Vec<Value> {
+    let mut parameters = route
+        .path_params
+        .iter()
+        .map(|param| {
+            json!({
+                "name": param.name,
+                "in": "path",
+                "required": true,
+                "schema": param.ty.as_deref().map_or_else(string_schema, type_schema),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(query_type) = &route.query_type {
+        parameters.extend(query_parameters(query_type, schemas));
+    }
+
+    parameters
+}
+
+fn query_parameters(type_name: &str, schemas: &HttpSchemaManifest) -> Vec<Value> {
+    if let Some(schema) = schemas
+        .structs
+        .iter()
+        .find(|schema| schema.name == type_name)
+    {
+        return schema
+            .fields
+            .iter()
+            .map(|field| query_parameter(&field.name, &field.ty, !field.optional))
+            .collect();
+    }
+
+    if let Some(schema) = schemas
+        .models
+        .iter()
+        .find(|schema| schema.name == type_name)
+    {
+        return schema
+            .fields
+            .iter()
+            .map(|field| query_parameter(&field.name, &field.ty, !field.optional))
+            .collect();
+    }
+
+    Vec::new()
+}
+
+fn query_parameter(name: &str, ty: &str, required: bool) -> Value {
+    json!({
+        "name": name,
+        "in": "query",
+        "required": required,
+        "schema": type_schema(ty),
+    })
 }
 
 fn responses(route: &HttpRouteContract) -> Value {

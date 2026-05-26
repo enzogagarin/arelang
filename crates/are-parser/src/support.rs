@@ -32,10 +32,14 @@ impl Parser<'_> {
     }
 
     pub(super) fn match_identifier(&mut self, expected: &str) -> Option<SourceRange> {
-        if self.peek().kind == TokenKind::Identifier && self.peek().lexeme == expected {
+        if self.check_identifier(expected) {
             return Some(self.advance().range);
         }
         None
+    }
+
+    pub(super) fn check_identifier(&self, expected: &str) -> bool {
+        self.peek().kind == TokenKind::Identifier && self.peek().lexeme == expected
     }
 
     pub(super) fn check_route_method(&self) -> bool {

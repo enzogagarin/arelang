@@ -10,6 +10,14 @@ pub trait Host {
     /// request body available.
     fn read_json_body(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
 
+    /// Decode the current HTTP request query string as a typed JSON object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query string is missing required fields or
+    /// cannot be decoded as the requested type.
+    fn read_query_params(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
+
     /// Check whether a JSON string is email-like.
     ///
     /// # Errors
@@ -65,6 +73,10 @@ pub(crate) struct NoopHost;
 impl Host for NoopHost {
     fn read_json_body(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression("req.json".into()))
+    }
+
+    fn read_query_params(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression("req.query".into()))
     }
 
     fn validate_email(&mut self, _value: &JsonValue) -> Result<bool, InterpretError> {

@@ -55,6 +55,9 @@ impl TypeChecker<'_> {
                         if let Some(body_type) = &route.body_type {
                             self.check_type_expr_arity(body_type);
                         }
+                        if let Some(query_type) = &route.query_type {
+                            self.check_type_expr_arity(query_type);
+                        }
                         if let Some(response_type) = &route.response_type {
                             self.check_type_expr_arity(response_type);
                         }
@@ -547,7 +550,11 @@ impl BodyChecker<'_> {
         args: &[CallArg],
         range: SourceRange,
     ) -> BodyType {
-        if !type_args.is_empty() && !matches!(builtin, Builtin::RequestJson | Builtin::ContextParam)
+        if !type_args.is_empty()
+            && !matches!(
+                builtin,
+                Builtin::RequestJson | Builtin::RequestQuery | Builtin::ContextParam
+            )
         {
             self.error(
                 "E_BODY_0014",
@@ -556,7 +563,7 @@ impl BodyChecker<'_> {
                     "`{callee_name}` does not accept type argument(s), got {}",
                     type_args.len()
                 ),
-                "only generic std calls such as `req.json<T>()` accept type arguments",
+                "only generic std calls such as `req.json<T>()` and `req.query<T>()` accept type arguments",
             );
         }
 
@@ -594,7 +601,7 @@ impl BodyChecker<'_> {
                 });
                 BodyType::HttpResponse
             }
-            Builtin::RequestJson => {
+            Builtin::RequestJson | Builtin::RequestQuery => {
                 self.expect_positional_arity(callee_name, args, 0, range);
                 let ok = self.single_type_arg(callee_name, type_args, range);
                 self.result_type(ok)

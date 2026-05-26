@@ -373,11 +373,37 @@ impl<'a> Parser<'a> {
 
     fn parse_route_contract(&mut self, start: Position, method: &str) -> Option<RouteDecl> {
         let path_token = self.expect_kind(&TokenKind::String, "expected route path string")?;
-        let body_type = if self.match_identifier("body").is_some() {
-            Some(self.parse_type_expr()?)
-        } else {
-            None
-        };
+        let mut body_type = None;
+        let mut query_type = None;
+        while self.check_identifier("body") || self.check_identifier("query") {
+            if let Some(keyword_range) = self.match_identifier("body") {
+                let parsed_body_type = self.parse_type_expr()?;
+                if body_type.is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_PARSE_0010",
+                        &self.file,
+                        SourceRange::new(keyword_range.start, parsed_body_type.range().end),
+                        "duplicate route body contract",
+                        "a route can declare at most one `body Payload` clause",
+                    ));
+                } else {
+                    body_type = Some(parsed_body_type);
+                }
+            } else if let Some(keyword_range) = self.match_identifier("query") {
+                let parsed_query_type = self.parse_type_expr()?;
+                if query_type.is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_PARSE_0010",
+                        &self.file,
+                        SourceRange::new(keyword_range.start, parsed_query_type.range().end),
+                        "duplicate route query contract",
+                        "a route can declare at most one `query Payload` clause",
+                    ));
+                } else {
+                    query_type = Some(parsed_query_type);
+                }
+            }
+        }
         self.expect_kind(&TokenKind::Arrow, "expected `->` before route handler")?;
         let handler = self.parse_path()?;
         let mut end = handler.range.end;
@@ -404,6 +430,7 @@ impl<'a> Parser<'a> {
             method: method.to_ascii_uppercase(),
             path: unquote(&path_token.lexeme),
             body_type,
+            query_type,
             handler,
             response_type,
             status,

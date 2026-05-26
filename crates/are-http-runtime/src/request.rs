@@ -21,4 +21,8 @@ impl RuntimeRequest {
             .split_once('?')
             .map_or(self.url.as_str(), |(path, _query)| path)
     }
+
+    pub(crate) fn query(&self) -> &str {
+        self.url.split_once('?').map_or("", |(_path, query)| query)
+    }
 }

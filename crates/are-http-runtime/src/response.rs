@@ -15,6 +15,13 @@ pub(crate) struct RuntimeResponse {
     pub(crate) body: serde_json::Value,
 }
 
+struct HandlerRequest<'a> {
+    route: &'a HttpRouteContract,
+    params: &'a HashMap<String, String>,
+    body: &'a str,
+    query: &'a str,
+}
+
 pub(crate) fn runtime_response(
     state: &RuntimeState,
     contracts: &HttpContractManifest,
@@ -37,10 +44,12 @@ pub(crate) fn runtime_response(
         state,
         functions,
         contracts.error_mapper.as_deref(),
-        route,
-        &route.handler,
-        &params,
-        &request.body,
+        &HandlerRequest {
+            route,
+            params: &params,
+            body: &request.body,
+            query: request.query(),
+        },
     );
     apply_route_response_contract(route, functions, response)
 }
@@ -83,18 +92,18 @@ fn interpreted_response(
     state: &RuntimeState,
     functions: &RuntimeFunctions,
     error_mapper: Option<&str>,
-    route: &HttpRouteContract,
-    handler: &str,
-    params: &HashMap<String, String>,
-    body: &str,
+    request: &HandlerRequest<'_>,
 ) -> RuntimeResponse {
+    let route = request.route;
+    let handler = route.handler.as_str();
     let Some(function) = functions.get(handler) else {
         return error_response(500, "handler_not_found");
     };
     let mut host = RuntimeHost {
         state,
-        params,
-        request_body: body,
+        params: request.params,
+        request_body: request.body,
+        query: request.query,
         schemas: &functions.schemas,
     };
 

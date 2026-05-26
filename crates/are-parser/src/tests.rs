@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 15);
+    assert_eq!(module.items.len(), 18);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -121,6 +121,7 @@ fn parses_method_shorthand_route_contracts() {
     let source = r#"
             service UsersApi(state: AppState) {
                 post "/users" body CreateUserInput -> create_user returns User status 201
+                get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
                 get "/users/{id: UserId}" -> get_user returns User status 200
             }
         "#;
@@ -139,10 +140,50 @@ fn parses_method_shorthand_route_contracts() {
     assert_eq!(service.routes[0].method, "POST");
     assert_eq!(service.routes[0].path, "/users");
     assert!(service.routes[0].body_type.is_some());
+    assert!(service.routes[0].query_type.is_none());
     assert!(service.routes[0].response_type.is_some());
     assert_eq!(service.routes[0].status.expect("status").value, 201);
     assert_eq!(service.routes[1].method, "GET");
-    assert_eq!(service.routes[1].path, "/users/{id: UserId}");
+    assert_eq!(service.routes[1].path, "/users/search");
     assert!(service.routes[1].body_type.is_none());
+    assert!(service.routes[1].query_type.is_some());
     assert_eq!(service.routes[1].status.expect("status").value, 200);
+    assert_eq!(service.routes[2].method, "GET");
+    assert_eq!(service.routes[2].path, "/users/{id: UserId}");
+    assert!(service.routes[2].body_type.is_none());
+    assert!(service.routes[2].query_type.is_none());
+    assert_eq!(service.routes[2].status.expect("status").value, 200);
+}
+
+#[test]
+fn rejects_duplicate_route_input_contracts() {
+    let source = r#"
+            service UsersApi(state: AppState) {
+                post "/users" body CreateUserInput body OtherInput -> create_user returns User status 201
+                get "/users/search" query SearchUsersQuery query OtherQuery -> search_users returns SearchUsersResponse status 200
+            }
+        "#;
+    let file = Path::new("test.are");
+    let (tokens, lex_diagnostics) = lex_source(file, source);
+    assert!(lex_diagnostics.is_empty());
+
+    let (module, diagnostics) = parse_tokens(file, &tokens);
+
+    assert!(module.is_none());
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "E_PARSE_0010")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.problem == "duplicate route body contract")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.problem == "duplicate route query contract")
+    );
 }

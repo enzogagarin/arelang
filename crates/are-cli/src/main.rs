@@ -233,6 +233,7 @@ fn create_project(
             println!(
                 "  curl -X POST http://{host}:{port}/users -H 'content-type: application/json' -d '{{\"email\":\"ada@example.com\",\"name\":\"Ada Lovelace\"}}'"
             );
+            println!("  curl 'http://{host}:{port}/users/search?email=ada%40example.com'");
             println!("  curl http://{host}:{port}/users/1");
         }
     }
@@ -374,6 +375,7 @@ fn print_test_report(report: &TestReport) {
         let contract = route_contract_label(
             &route.path,
             route.body_type.as_deref(),
+            route.query_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -514,6 +516,7 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
         let contract = route_contract_label(
             &route.path,
             route.body_type.as_deref(),
+            route.query_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -654,6 +657,7 @@ fn audit_status_label(status: AuditStatus) -> &'static str {
 fn route_contract_label(
     path: &str,
     body_type: Option<&str>,
+    query_type: Option<&str>,
     response_type: Option<&str>,
     status: Option<u16>,
 ) -> String {
@@ -661,6 +665,10 @@ fn route_contract_label(
         Some(body_type) => format!("{path} body {body_type}"),
         None => path.to_string(),
     };
+    if let Some(query_type) = query_type {
+        contract.push_str(" query ");
+        contract.push_str(query_type);
+    }
     if let Some(response_type) = response_type {
         contract.push_str(" returns ");
         contract.push_str(response_type);
@@ -778,6 +786,14 @@ struct HealthResponse {{
     status: String
 }}
 
+struct SearchUsersQuery {{
+    email: Email
+}}
+
+struct SearchUsersResponse {{
+    email: Email
+}}
+
 model User {{
     id: UserId primary
     email: Email unique
@@ -806,6 +822,11 @@ fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, A
     return user
 }}
 
+fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SearchUsersResponse, ApiError> {{
+    let query = req.query<SearchUsersQuery>()?
+    return {{ "email": query.email }}
+}}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {{
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -825,6 +846,7 @@ service {service_name}(state: AppState) {{
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/{{id: UserId}}" -> get_user returns User status 200
 }}
 "#
@@ -925,8 +947,24 @@ mod tests {
     #[test]
     fn renders_route_contract_labels() {
         assert_eq!(
-            route_contract_label("/users", Some("CreateUserInput"), Some("User"), Some(201)),
+            route_contract_label(
+                "/users",
+                Some("CreateUserInput"),
+                None,
+                Some("User"),
+                Some(201)
+            ),
             "/users body CreateUserInput returns User status 201"
+        );
+        assert_eq!(
+            route_contract_label(
+                "/users/search",
+                None,
+                Some("SearchUsersQuery"),
+                Some("SearchUsersResponse"),
+                Some(200)
+            ),
+            "/users/search query SearchUsersQuery returns SearchUsersResponse status 200"
         );
     }
 
@@ -954,10 +992,14 @@ mod tests {
         let source = users_source("GeneratedUsersApi");
         assert!(source.contains("model User"));
         assert!(source.contains("fn create_user"));
+        assert!(source.contains("fn search_users"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
         assert!(source.contains(
             r#"post "/users" body CreateUserInput -> create_user returns User status 201"#
+        ));
+        assert!(source.contains(
+            r#"get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200"#
         ));
         assert!(
             source.contains(r#"get "/users/{id: UserId}" -> get_user returns User status 200"#)

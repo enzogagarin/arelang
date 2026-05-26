@@ -194,6 +194,61 @@ fn checks_body_contract_against_handler_decode_type() {
 }
 
 #[test]
+fn requires_query_contract_when_handler_decodes_query() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct SearchUsersQuery { email: String }
+            enum ApiError { Failed }
+
+            fn search(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let query = req.query<SearchUsersQuery>()?
+                return Http.Response.ok(query)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/users/search" -> search
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0433");
+}
+
+#[test]
+fn checks_query_contract_against_handler_decode_type() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct SearchUsersQuery { email: String }
+            struct OtherQuery { name: String }
+            enum ApiError { Failed }
+
+            fn search(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let query = req.query<OtherQuery>()?
+                return Http.Response.ok(query)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/users/search" query SearchUsersQuery -> search
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0432");
+}
+
+#[test]
 fn checks_response_contract_against_handler_body() {
     let source = r#"
             use std.http as Http

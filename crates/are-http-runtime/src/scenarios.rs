@@ -75,6 +75,16 @@ pub(crate) fn test_users_scenario(
     expect_json_string(&created, "email", "ada@example.com", "POST /users")?;
     checks.push("POST /users creates a user with 201".to_string());
 
+    let searched = runtime_response(
+        &state,
+        &prepared.contracts,
+        &prepared.functions,
+        &RuntimeRequest::new(Method::Get, "/users/search?email=ada%40example.com", ""),
+    );
+    expect_status(&searched, 200, "GET /users/search")?;
+    expect_json_string(&searched, "email", "ada@example.com", "GET /users/search")?;
+    checks.push("GET /users/search decodes typed query params".to_string());
+
     let fetched = runtime_response(
         &state,
         &prepared.contracts,

@@ -116,6 +116,8 @@ run cargo test --workspace
 run cargo clippy --workspace --all-targets -- -D warnings
 
 log "static checks for bundled examples"
+run "$ROOT_DIR/are" fmt "$ROOT_DIR/examples/hello_api" --check
+run "$ROOT_DIR/are" fmt "$ROOT_DIR/examples/users_api" --check
 run "$ROOT_DIR/are" check "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" check "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" test "$ROOT_DIR/examples/hello_api" --json
@@ -124,6 +126,7 @@ run "$ROOT_DIR/are" test "$ROOT_DIR/examples/users_api" --json
 log "generated project smoke"
 GENERATED="$TMP_DIR/generated_api"
 run "$ROOT_DIR/are" new "$GENERATED" --name generated-api --port 18092
+run "$ROOT_DIR/are" fmt "$GENERATED" --check
 run "$ROOT_DIR/are" check "$GENERATED" --json
 run "$ROOT_DIR/are" test "$GENERATED" --json
 start_server generated "$GENERATED"
@@ -135,6 +138,7 @@ assert_file_contains "$TMP_DIR/generated_ping.json" '"message":"pong"' "generate
 log "generated users template smoke"
 GENERATED_USERS="$TMP_DIR/generated_users_api"
 run "$ROOT_DIR/are" new "$GENERATED_USERS" --name generated-users-api --template users --port 18094
+run "$ROOT_DIR/are" fmt "$GENERATED_USERS" --check
 run "$ROOT_DIR/are" check "$GENERATED_USERS" --json
 run "$ROOT_DIR/are" test "$GENERATED_USERS" --json
 start_server generated_users "$GENERATED_USERS"

@@ -1,4 +1,5 @@
 use are_diagnostics::Diagnostic;
+use are_format::format_source;
 use are_http_runtime::{TestReport, run_project, test_project};
 use are_project::check_path;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -51,11 +52,15 @@ enum Command {
         json: bool,
     },
 
-    /// Format source files. This command is a placeholder until arefmt lands.
+    /// Format source files.
     Fmt {
         /// Project directory or .are file to format.
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Check formatting without writing files.
+        #[arg(long)]
+        check: bool,
     },
 
     /// Run an Arelang HTTP server project.
@@ -126,10 +131,7 @@ fn main() -> ExitCode {
             }
         },
         Command::Check { path, json } => run_check(&path, json),
-        Command::Fmt { path } => {
-            println!("are fmt is planned; {} was left unchanged", path.display());
-            ExitCode::SUCCESS
-        }
+        Command::Fmt { path, check } => run_fmt(&path, check),
         Command::Run { path } => {
             if let Err(err) = run_project(&path) {
                 eprintln!("{err}");
@@ -235,6 +237,60 @@ fn print_human_diagnostics(diagnostics: &[Diagnostic]) {
     }
 }
 
+fn run_fmt(path: &Path, check: bool) -> ExitCode {
+    let files = match collect_are_files(path) {
+        Ok(files) => files,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut changed = Vec::new();
+    for file in &files {
+        let source = match fs::read_to_string(file) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("{}: {err}", file.display());
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let formatted = match format_source(file, &source) {
+            Ok(formatted) => formatted,
+            Err(diagnostics) => {
+                print_human_diagnostics(&diagnostics);
+                return ExitCode::FAILURE;
+            }
+        };
+
+        if formatted == source {
+            continue;
+        }
+
+        changed.push(file.clone());
+        if !check && let Err(err) = fs::write(file, formatted) {
+            eprintln!("{}: {err}", file.display());
+            return ExitCode::FAILURE;
+        }
+    }
+
+    if check && !changed.is_empty() {
+        for file in &changed {
+            eprintln!("{} is not formatted", file.display());
+        }
+        return ExitCode::FAILURE;
+    }
+
+    if check {
+        println!("checked formatting for {} Arelang file(s)", files.len());
+    } else {
+        println!("formatted {} Arelang file(s)", files.len());
+    }
+
+    ExitCode::SUCCESS
+}
+
 fn run_test(path: &Path, json: bool) -> ExitCode {
     let report = match test_project(path) {
         Ok(report) => report,
@@ -282,6 +338,49 @@ fn print_test_report(report: &TestReport) {
             println!("    - {check}");
         }
     }
+}
+
+fn collect_are_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if path.is_file() {
+        return if path.extension().is_some_and(|extension| extension == "are") {
+            Ok(vec![path.to_path_buf()])
+        } else {
+            Err(format!("{} is not an .are file", path.display()))
+        };
+    }
+
+    if !path.exists() {
+        return Err(format!("{} does not exist", path.display()));
+    }
+
+    let mut files = Vec::new();
+    collect_are_files_in_dir(path, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_are_files_in_dir(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(path).map_err(io_error(path))? {
+        let entry = entry.map_err(|err| format!("{}: {err}", path.display()))?;
+        let entry_path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        if matches!(name.as_ref(), ".git" | "target") {
+            continue;
+        }
+
+        if entry_path.is_dir() {
+            collect_are_files_in_dir(&entry_path, files)?;
+        } else if entry_path
+            .extension()
+            .is_some_and(|extension| extension == "are")
+        {
+            files.push(entry_path);
+        }
+    }
+
+    Ok(())
 }
 
 fn project_manifest(package_name: &str, host: &str, port: u16) -> String {

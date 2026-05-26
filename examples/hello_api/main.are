@@ -9,4 +9,3 @@ fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response {
 service HelloApi(state: AppState) {
     route GET "/ping" -> ping
 }
-

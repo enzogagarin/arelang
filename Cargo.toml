@@ -3,6 +3,7 @@ members = [
     "crates/are-ast",
     "crates/are-cli",
     "crates/are-diagnostics",
+    "crates/are-format",
     "crates/are-lexer",
     "crates/are-interpreter",
     "crates/are-parser",

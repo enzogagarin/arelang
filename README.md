@@ -48,11 +48,15 @@ From the repository root, the current demos are intentionally a small set of com
 ```sh
 ./are new scratch_api --port 8090
 ./are new scratch_users --template users --port 8091
+./are fmt scratch_api --check
 ./are check scratch_api
 ./are test scratch_api
 ./are run scratch_api
+./are fmt examples/hello_api --check
 ./are check examples/hello_api
+./are test examples/hello_api
 ./are run examples/hello_api
+./are fmt examples/users_api --check
 ./are check examples/users_api
 ./are check examples/users_api --json
 ./are test examples/users_api
@@ -72,6 +76,7 @@ After that, the commands become:
 
 ```sh
 are check examples/hello_api
+are fmt examples/hello_api --check
 are test examples/hello_api
 are run examples/hello_api
 ```
@@ -85,7 +90,9 @@ are run examples/hello_api
 
 When a server starts, `are run` prints the service name, package, listen URL, and route table so the project is immediately curlable.
 
-`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, Rust tests, clippy, `are check`, `are test`, generated minimal and users-template APIs, real HTTP servers on high local ports, and response verification with `curl`.
+`scripts/mvp-smoke.sh` is the current MVP health check. It runs Rust formatting, Arelang formatting, Rust tests, clippy, `are check`, `are test`, generated minimal and users-template APIs, real HTTP servers on high local ports, and response verification with `curl`.
+
+`are fmt` rewrites `.are` files into the canonical Arelang style. `--check` verifies formatting without writing, which is what CI uses. The first formatter intentionally refuses to rewrite files with comments until comment-preserving formatting is implemented.
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
 

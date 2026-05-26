@@ -65,6 +65,7 @@ name = "are-cli"
 version = "0.1.0"
 dependencies = [
  "are-diagnostics",
+ "are-format",
  "are-http-runtime",
  "are-project",
  "clap",
@@ -77,6 +78,16 @@ name = "are-diagnostics"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "are-format"
+version = "0.1.0"
+dependencies = [
+ "are-ast",
+ "are-diagnostics",
+ "are-lexer",
+ "are-parser",
 ]
 
 [[package]]

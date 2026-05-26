@@ -53,6 +53,7 @@ source.are
 ```sh
 are check examples/users_api
 are check --json examples/users_api
+are fmt examples/users_api --check
 are test examples/users_api
 are run examples/users_api
 ```
@@ -67,6 +68,14 @@ Current `are check` behavior:
 - resolve imports, declarations, service uses, and route handlers
 - typecheck function signatures, generic arity, route handlers, and HTTP error mappers
 - emit human or JSON diagnostics
+
+Current `are fmt` behavior:
+
+- collect `.are` files from a project directory or format one `.are` file
+- parse the supported MVP syntax into AST
+- render canonical spacing, indentation, and top-level grouping
+- refuse comment-containing files until comments can be preserved
+- support `--check` for CI
 
 Current `are run` behavior:
 

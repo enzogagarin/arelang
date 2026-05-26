@@ -34,7 +34,8 @@ Native codegen, arena escape checking, package publishing, database adapters, an
 are fmt
 are check --json
 are inspect --json
-are openapi examples/users_api
+are openapi examples/users_api --output openapi.json
+are openapi examples/users_api --check --output openapi.json
 are run examples/users_api
 are test
 are audit
@@ -53,7 +54,8 @@ From the repository root, the current demos are intentionally a small set of com
 ./are fmt scratch_api --check
 ./are check scratch_api
 ./are inspect scratch_api
-./are openapi scratch_api
+./are openapi scratch_api --output scratch_api/openapi.json
+./are openapi scratch_api --check
 ./are audit scratch_api
 ./are test scratch_api
 ./are run scratch_api
@@ -67,7 +69,8 @@ From the repository root, the current demos are intentionally a small set of com
 ./are check examples/users_api --json
 ./are inspect examples/users_api
 ./are inspect examples/users_api --json
-./are openapi examples/users_api > openapi.json
+./are openapi examples/users_api --output openapi.json
+./are openapi examples/users_api --check --output openapi.json
 ./are audit examples/users_api
 ./are audit examples/users_api --json
 ./are test examples/users_api
@@ -115,7 +118,7 @@ The HTTP runtime now prepares a checked contract manifest before serving request
 
 `are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface, including aliases, structs, models, enum variants, model collections, and primary/unique model field metadata. This is the seed for OpenAPI/client generation and lets Arelang expose backend contracts without making users read the runtime internals.
 
-`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params to OpenAPI parameters, and Arelang aliases, structs, models, and enums to `components.schemas`.
+`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params to OpenAPI parameters, and Arelang aliases, structs, models, and enums to `components.schemas`. By default it prints to stdout; `--output openapi.json` writes a stable file, and `--check` fails when that file has drifted from the current Arelang source. Without `--output`, `--check` looks for `openapi.json` in the project root.
 
 `are audit` is the first production-shape safety loop. It runs static checks, builds the HTTP contract manifest, verifies every route has a response type and success status, and checks `[capabilities]` in `are.toml` against the server listen address and the MVP least-privilege defaults. It fails on missing required listen capability, missing capability manifest, static check failures, or process spawning being enabled.
 

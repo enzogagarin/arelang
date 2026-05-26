@@ -4,7 +4,7 @@ use are_format::format_source;
 use are_http_runtime::{
     HttpContractManifest, TestReport, inspect_project, openapi_project, run_project, test_project,
 };
-use are_project::check_path;
+use are_project::{check_path, project_root};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -101,6 +101,14 @@ enum Command {
         /// Project directory to export.
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Write the generated document to a file instead of stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Check that the output file matches the current Arelang source.
+        #[arg(long)]
+        check: bool,
     },
 
     /// Audit backend safety and capability manifest checks.
@@ -175,7 +183,11 @@ fn main() -> ExitCode {
         }
         Command::Test { path, json } => run_test(&path, json),
         Command::Inspect { path, json } => run_inspect(&path, json),
-        Command::OpenApi { path } => run_openapi(&path),
+        Command::OpenApi {
+            path,
+            output,
+            check,
+        } => run_openapi(&path, output.as_deref(), check),
         Command::Audit { path, json } => run_audit(&path, json),
     }
 }
@@ -409,7 +421,7 @@ fn run_inspect(path: &Path, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_openapi(path: &Path) -> ExitCode {
+fn run_openapi(path: &Path, output: Option<&Path>, check: bool) -> ExitCode {
     let document = match openapi_project(path) {
         Ok(document) => document,
         Err(err) => {
@@ -418,16 +430,77 @@ fn run_openapi(path: &Path) -> ExitCode {
         }
     };
 
-    match serde_json::to_string_pretty(&document) {
-        Ok(encoded) => {
-            println!("{encoded}");
-            ExitCode::SUCCESS
-        }
+    let encoded = match serde_json::to_string_pretty(&document) {
+        Ok(encoded) => format!("{encoded}\n"),
         Err(err) => {
             eprintln!("failed to encode OpenAPI JSON: {err}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+
+    if check {
+        return run_openapi_check(path, output, &encoded);
     }
+
+    if let Some(output) = output {
+        match fs::write(output, encoded) {
+            Ok(()) => {
+                println!("wrote {}", output.display());
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("failed to write {}: {err}", output.display());
+                ExitCode::FAILURE
+            }
+        }
+    } else {
+        print!("{encoded}");
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_openapi_check(path: &Path, output: Option<&Path>, encoded: &str) -> ExitCode {
+    let output = match openapi_check_path(path, output) {
+        Ok(output) => output,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let existing = match fs::read_to_string(&output) {
+        Ok(existing) => existing,
+        Err(err) => {
+            eprintln!("failed to read {}: {err}", output.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if existing == encoded {
+        println!("OpenAPI contract is up to date: {}", output.display());
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "OpenAPI contract drift: {} is out of date",
+            output.display()
+        );
+        eprintln!(
+            "hint: run `are openapi {} --output {}`",
+            path.display(),
+            output.display()
+        );
+        ExitCode::FAILURE
+    }
+}
+
+fn openapi_check_path(path: &Path, output: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(output) = output {
+        return Ok(output.to_path_buf());
+    }
+
+    project_root(path)
+        .map(|root| root.join("openapi.json"))
+        .map_err(|err| err.to_string())
 }
 
 fn print_contract_manifest(manifest: &HttpContractManifest) {
@@ -826,11 +899,11 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        audit_status_label, kebab_case, minimal_source, package_name_from_path, pascal_case,
-        route_contract_label, service_name_from_package, users_source,
+        audit_status_label, kebab_case, minimal_source, openapi_check_path, package_name_from_path,
+        pascal_case, route_contract_label, service_name_from_package, users_source,
     };
     use are_audit::AuditStatus;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn derives_project_names() {
@@ -862,6 +935,18 @@ mod tests {
         assert_eq!(audit_status_label(AuditStatus::Pass), "pass");
         assert_eq!(audit_status_label(AuditStatus::Warn), "warn");
         assert_eq!(audit_status_label(AuditStatus::Fail), "fail");
+    }
+
+    #[test]
+    fn resolves_explicit_openapi_check_path() {
+        assert_eq!(
+            openapi_check_path(
+                Path::new("missing-project"),
+                Some(Path::new("api/openapi.json"))
+            )
+            .expect("explicit path"),
+            PathBuf::from("api/openapi.json")
+        );
     }
 
     #[test]

@@ -126,6 +126,8 @@ Current `are openapi` behavior:
 - map typed path params to OpenAPI path parameters
 - map aliases, structs, models, and enums to `components.schemas`
 - preserve Arelang-specific model metadata through `x-are-*` extensions
+- write the generated document with `--output`
+- compare the current source-derived document against a checked-in file with `--check`
 
 Current `are audit` behavior:
 

@@ -134,7 +134,7 @@ Output:
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
 - `are inspect` schema export: done for aliases, structs, models, enum variants, model collections, and primary/unique field metadata
-- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path params, servers, and component schemas
+- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path params, servers, component schemas, file output, and drift checks
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done

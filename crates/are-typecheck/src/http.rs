@@ -1,0 +1,751 @@
+use super::{TypeChecker, is_identifier, path_is, path_name, same_type, type_name};
+use are_ast::{
+    CallArg, Expr, FunctionBody, FunctionDecl, Path, RouteDecl, ServiceDecl, Stmt, TypeExpr,
+};
+use are_diagnostics::{Diagnostic, SourceRange};
+use std::collections::HashMap;
+
+impl TypeChecker<'_> {
+    pub(super) fn check_routes(&mut self, decl: &ServiceDecl, state_type: &TypeExpr) {
+        let mut result_error_types = Vec::new();
+
+        for route in &decl.routes {
+            let path_params = self.check_route_shape(route);
+            self.check_route_body_contract(route);
+
+            let Some(handler) = route
+                .handler
+                .segments
+                .first()
+                .and_then(|name| self.functions.get(name))
+                .copied()
+            else {
+                continue;
+            };
+
+            self.check_route_io_contract(route, handler, &path_params);
+            if let Some(error_type) = self.check_route_handler(handler, state_type) {
+                result_error_types.push(error_type);
+            }
+        }
+
+        self.check_error_mapping(decl, &result_error_types);
+    }
+
+    fn check_route_shape(&mut self, route: &RouteDecl) -> Vec<RoutePathParam> {
+        if !is_http_method(&route.method) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0101",
+                &self.file,
+                route.range,
+                format!("unsupported HTTP method `{}`", route.method),
+                "supported methods are GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS",
+            ));
+        }
+
+        if !route.path.starts_with('/') {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0102",
+                &self.file,
+                route.range,
+                format!("route path `{}` must start with `/`", route.path),
+                "route paths are absolute within the service",
+            ));
+        }
+
+        self.check_route_params(route)
+    }
+
+    fn check_route_params(&mut self, route: &RouteDecl) -> Vec<RoutePathParam> {
+        let mut params = HashMap::new();
+        let mut parsed = Vec::new();
+
+        for segment in route.path.split('/') {
+            let param = match route_param_from_segment(segment) {
+                RouteSegmentParam::None => continue,
+                RouteSegmentParam::Malformed(reason) => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0105",
+                        &self.file,
+                        route.range,
+                        format!("invalid route parameter segment `{segment}`"),
+                        reason,
+                    ));
+                    continue;
+                }
+                RouteSegmentParam::Param(param) => param,
+            };
+
+            if param.name.is_empty() || !is_identifier(&param.name) {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0103",
+                    &self.file,
+                    route.range,
+                    format!("invalid route parameter `{}`", param.name),
+                    "route parameters must use identifier syntax, such as `id`",
+                ));
+                continue;
+            }
+
+            if let Some(type_name) = &param.ty
+                && !self.is_known_contract_type(type_name)
+            {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0106",
+                    &self.file,
+                    route.range,
+                    format!("unknown route parameter type `{type_name}`"),
+                    "typed route parameters must use a builtin or local type",
+                ));
+            }
+
+            if params.insert(param.name.clone(), route.range).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0104",
+                    &self.file,
+                    route.range,
+                    format!("duplicate route parameter `{}`", param.name),
+                    "each route parameter name must be unique within a path",
+                ));
+            }
+
+            parsed.push(param);
+        }
+
+        parsed
+    }
+
+    fn check_route_body_contract(&mut self, route: &RouteDecl) {
+        let Some(body_type) = &route.body_type else {
+            return;
+        };
+
+        if !route_method_allows_body(&route.method) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0410",
+                &self.file,
+                body_type.range(),
+                format!("{} routes cannot declare a request body", route.method),
+                "body contracts are currently accepted for POST, PUT, and PATCH routes",
+            ));
+        }
+
+        if !self.is_local_payload_type(body_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0411",
+                &self.file,
+                body_type.range(),
+                format!(
+                    "route body `{}` is not a local payload type",
+                    type_name(body_type)
+                ),
+                "body contracts should name a local struct or model such as `CreateUserInput`",
+            ));
+        }
+    }
+
+    fn check_route_io_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+    ) {
+        let uses = collect_handler_io_uses(handler);
+        self.check_route_path_param_contract(route, handler, path_params, &uses);
+        self.check_route_body_decode_contract(route, handler, &uses);
+    }
+
+    fn check_route_path_param_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+        uses: &HandlerIoUses,
+    ) {
+        for param_use in &uses.path_params {
+            let Some(name) = &param_use.name else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0404",
+                    &self.file,
+                    param_use.range,
+                    "ctx.param requires a literal route parameter name",
+                    "write route parameter reads as `ctx.param<UserId>(\"id\")` so the compiler can check the route contract",
+                ));
+                continue;
+            };
+
+            let Some(route_param) = path_params.iter().find(|param| param.name == *name) else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0403",
+                    &self.file,
+                    param_use.range,
+                    format!(
+                        "handler `{}` reads unknown route parameter `{name}`",
+                        handler.name
+                    ),
+                    "the route path must declare the parameter before the handler can read it",
+                ));
+                continue;
+            };
+
+            if let Some(expected) = &route_param.ty {
+                match &param_use.ty {
+                    Some(actual) if actual == expected => {}
+                    Some(actual) => self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0402",
+                        &self.file,
+                        param_use.range,
+                        format!("route parameter `{name}` is `{expected}` but handler reads `{actual}`"),
+                        "the route path type and ctx.param<T> type must match",
+                    )),
+                    None => self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0402",
+                        &self.file,
+                        param_use.range,
+                        format!("route parameter `{name}` is `{expected}` but handler does not declare a read type"),
+                        "read typed route parameters with `ctx.param<T>(\"name\")`",
+                    )),
+                }
+            }
+        }
+
+        for route_param in path_params.iter().filter(|param| param.ty.is_some()) {
+            if uses
+                .path_params
+                .iter()
+                .any(|param_use| param_use.name.as_deref() == Some(route_param.name.as_str()))
+            {
+                continue;
+            }
+
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0401",
+                &self.file,
+                route.range,
+                format!(
+                    "typed route parameter `{}` is not read by handler `{}`",
+                    route_param.name, handler.name
+                ),
+                "typed path parameters are part of the handler contract and should be consumed with ctx.param<T>",
+            ));
+        }
+    }
+
+    fn check_route_body_decode_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        uses: &HandlerIoUses,
+    ) {
+        if let Some(body_type) = &route.body_type {
+            let expected = type_name(body_type);
+            if uses.request_bodies.is_empty() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0412",
+                    &self.file,
+                    route.range,
+                    format!(
+                        "route body `{expected}` is not decoded by handler `{}`",
+                        handler.name
+                    ),
+                    "decode the declared body with `req.json<T>()` inside the route handler",
+                ));
+                return;
+            }
+
+            if !uses
+                .request_bodies
+                .iter()
+                .any(|body_use| body_use.ty.as_deref() == Some(expected.as_str()))
+            {
+                let actual = uses
+                    .request_bodies
+                    .iter()
+                    .filter_map(|body_use| body_use.ty.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0413",
+                    &self.file,
+                    route.range,
+                    format!("route body `{expected}` does not match handler decode `{actual}`"),
+                    "the service route body contract and req.json<T>() type must match",
+                ));
+            }
+        } else if let Some(body_use) = uses.request_bodies.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0414",
+                &self.file,
+                body_use.range,
+                format!(
+                    "handler `{}` decodes JSON without a route body contract",
+                    handler.name
+                ),
+                "declare the route body as `post \"/path\" body Payload -> handler`",
+            ));
+        }
+    }
+
+    fn is_known_contract_type(&self, name: &str) -> bool {
+        is_builtin_type_name(name)
+            || self.types.contains_key(name)
+            || self.structs.contains_key(name)
+            || self.models.contains_key(name)
+            || self.enums.contains_key(name)
+    }
+
+    fn is_local_payload_type(&self, ty: &TypeExpr) -> bool {
+        let TypeExpr::Path { path } = ty else {
+            return false;
+        };
+
+        path.segments.len() == 1
+            && (self.structs.contains_key(&path.segments[0])
+                || self.models.contains_key(&path.segments[0]))
+    }
+
+    fn check_route_handler(
+        &mut self,
+        handler: &FunctionDecl,
+        state_type: &TypeExpr,
+    ) -> Option<TypeExpr> {
+        if handler.params.len() != 2 {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0201",
+                &self.file,
+                handler.range,
+                format!(
+                    "route handler `{}` must accept exactly 2 parameters",
+                    handler.name
+                ),
+                "HTTP handlers use `(ctx: Http.Context<AppState>, req: Http.Request)`",
+            ));
+            return None;
+        }
+
+        let ctx = &handler.params[0];
+        if !self.is_http_context_of(&ctx.ty, state_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0202",
+                &self.file,
+                ctx.ty.range(),
+                format!(
+                    "first parameter of `{}` must be Http.Context<{}>",
+                    handler.name,
+                    type_name(state_type)
+                ),
+                "route handlers receive service state through the typed HTTP context",
+            ));
+        }
+
+        let req = &handler.params[1];
+        if !self.is_http_path(&req.ty, "Request") {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0203",
+                &self.file,
+                req.ty.range(),
+                format!(
+                    "second parameter of `{}` must be Http.Request",
+                    handler.name
+                ),
+                "route handlers receive the incoming request as the second parameter",
+            ));
+        }
+
+        let Some(return_type) = &handler.return_type else {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0204",
+                &self.file,
+                handler.range,
+                format!("route handler `{}` must return Http.Response", handler.name),
+                "handlers may return Http.Response or Result<Http.Response, ApiError>",
+            ));
+            return None;
+        };
+
+        if self.is_http_path(return_type, "Response") {
+            return None;
+        }
+
+        if let Some(error_type) = self.result_response_error(return_type) {
+            return Some(error_type.clone());
+        }
+
+        self.diagnostics.push(Diagnostic::error(
+            "E_HTTP_0204",
+            &self.file,
+            return_type.range(),
+            format!(
+                "route handler `{}` has invalid return type `{}`",
+                handler.name,
+                type_name(return_type)
+            ),
+            "handlers may return Http.Response or Result<Http.Response, ApiError>",
+        ));
+
+        None
+    }
+
+    fn check_error_mapping(&mut self, decl: &ServiceDecl, result_error_types: &[TypeExpr]) {
+        let Some(first_error) = result_error_types.first() else {
+            return;
+        };
+
+        for error_type in result_error_types.iter().skip(1) {
+            if !same_type(first_error, error_type) {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0301",
+                    &self.file,
+                    error_type.range(),
+                    "service routes use multiple error types",
+                    "the HTTP MVP supports one service error family so a single mapper can convert it to Http.Response",
+                ));
+            }
+        }
+
+        let error_map_uses = self.error_map_uses(decl);
+        if error_map_uses.is_empty() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0302",
+                &self.file,
+                decl.range,
+                format!("service `{}` needs an HTTP error mapper", decl.name),
+                "routes returning Result<Http.Response, E> require `use Http.error_map(map_error)`",
+            ));
+            return;
+        }
+
+        if error_map_uses.len() > 1 {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0303",
+                &self.file,
+                decl.range,
+                format!("service `{}` has multiple HTTP error mappers", decl.name),
+                "the HTTP MVP allows one `Http.error_map` per service",
+            ));
+        }
+
+        for service_use in error_map_uses {
+            if service_use.args.len() != 1 {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0304",
+                    &self.file,
+                    service_use.range,
+                    "Http.error_map expects exactly one mapper function",
+                    "use `Http.error_map(map_error)`",
+                ));
+                continue;
+            }
+
+            self.check_error_mapper(&service_use.args[0], first_error);
+        }
+    }
+
+    fn check_error_mapper(&mut self, mapper_path: &Path, expected_error: &TypeExpr) {
+        if mapper_path.segments.len() != 1 {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0305",
+                &self.file,
+                mapper_path.range,
+                "HTTP error mapper must be a local function",
+                "use a local function name such as `map_error`",
+            ));
+            return;
+        }
+
+        let mapper_name = &mapper_path.segments[0];
+        let Some(mapper) = self.functions.get(mapper_name).copied() else {
+            let mut diagnostic = Diagnostic::error(
+                "E_HTTP_0305",
+                &self.file,
+                mapper_path.range,
+                format!("unknown HTTP error mapper `{mapper_name}`"),
+                "declare a mapper function before using it in the service",
+            );
+            if let Some(suggestion) = self.function_suggestion(mapper_name) {
+                diagnostic =
+                    diagnostic.with_fix(format!("did you mean `{suggestion}`?"), Some(suggestion));
+            }
+            self.diagnostics.push(diagnostic);
+            return;
+        };
+
+        if mapper.params.len() != 1 {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0306",
+                &self.file,
+                mapper.range,
+                format!("HTTP error mapper `{mapper_name}` must accept exactly one parameter"),
+                "mapper signature should be `fn map_error(err: ApiError) -> Http.Response`",
+            ));
+            return;
+        }
+
+        let mapper_param = &mapper.params[0].ty;
+        if !same_type(mapper_param, expected_error) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0307",
+                &self.file,
+                mapper_param.range(),
+                format!(
+                    "HTTP error mapper `{mapper_name}` accepts `{}` but route errors use `{}`",
+                    type_name(mapper_param),
+                    type_name(expected_error)
+                ),
+                "mapper parameter type must match the service route Result error type",
+            ));
+        }
+
+        if !mapper
+            .return_type
+            .as_ref()
+            .is_some_and(|return_type| self.is_http_path(return_type, "Response"))
+        {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0308",
+                &self.file,
+                mapper.range,
+                format!("HTTP error mapper `{mapper_name}` must return Http.Response"),
+                "mapper signature should be `fn map_error(err: ApiError) -> Http.Response`",
+            ));
+        }
+    }
+
+    fn error_map_uses<'a>(&self, decl: &'a ServiceDecl) -> Vec<&'a are_ast::ServiceUse> {
+        decl.uses
+            .iter()
+            .filter(|service_use| self.path_is_http(&service_use.target, "error_map"))
+            .collect()
+    }
+
+    fn result_response_error<'b>(&self, ty: &'b TypeExpr) -> Option<&'b TypeExpr> {
+        let TypeExpr::Generic { base, args, .. } = ty else {
+            return None;
+        };
+
+        if !path_is(base, &["Result"])
+            || args.len() != 2
+            || !self.is_http_path(&args[0], "Response")
+        {
+            return None;
+        }
+
+        Some(&args[1])
+    }
+
+    fn is_http_context_of(&self, ty: &TypeExpr, state_type: &TypeExpr) -> bool {
+        let TypeExpr::Generic { base, args, .. } = ty else {
+            return false;
+        };
+
+        self.path_is_http(base, "Context") && args.len() == 1 && same_type(&args[0], state_type)
+    }
+
+    fn is_http_path(&self, ty: &TypeExpr, name: &str) -> bool {
+        let TypeExpr::Path { path } = ty else {
+            return false;
+        };
+
+        self.path_is_http(path, name)
+    }
+
+    pub(super) fn path_is_http(&self, path: &Path, name: &str) -> bool {
+        path.segments.len() == 2
+            && self.http_aliases.contains(&path.segments[0])
+            && path.segments[1] == name
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoutePathParam {
+    name: String,
+    ty: Option<String>,
+}
+
+enum RouteSegmentParam {
+    None,
+    Param(RoutePathParam),
+    Malformed(&'static str),
+}
+
+#[derive(Debug, Clone)]
+struct PathParamUse {
+    name: Option<String>,
+    ty: Option<String>,
+    range: SourceRange,
+}
+
+#[derive(Debug, Clone)]
+struct RequestBodyUse {
+    ty: Option<String>,
+    range: SourceRange,
+}
+
+#[derive(Debug, Default)]
+struct HandlerIoUses {
+    path_params: Vec<PathParamUse>,
+    request_bodies: Vec<RequestBodyUse>,
+}
+
+fn collect_handler_io_uses(function: &FunctionDecl) -> HandlerIoUses {
+    let mut uses = HandlerIoUses::default();
+    let FunctionBody::Parsed { block } = &function.body else {
+        return uses;
+    };
+
+    for statement in &block.statements {
+        collect_statement_io_uses(statement, &mut uses);
+    }
+
+    uses
+}
+
+fn collect_statement_io_uses(statement: &Stmt, uses: &mut HandlerIoUses) {
+    match statement {
+        Stmt::Let { value, .. } | Stmt::Expr { value, .. } | Stmt::Return { value, .. } => {
+            collect_expr_io_uses(value, uses);
+        }
+        Stmt::Ensure {
+            condition, error, ..
+        } => {
+            collect_expr_io_uses(condition, uses);
+            collect_expr_io_uses(error, uses);
+        }
+        Stmt::Match { value, arms, .. } => {
+            collect_expr_io_uses(value, uses);
+            for arm in arms {
+                collect_statement_io_uses(&arm.body, uses);
+            }
+        }
+    }
+}
+
+fn collect_expr_io_uses(expr: &Expr, uses: &mut HandlerIoUses) {
+    match expr {
+        Expr::String { .. } | Expr::Integer { .. } | Expr::Bool { .. } | Expr::Path { .. } => {}
+        Expr::Object { fields, .. } => {
+            for field in fields {
+                collect_expr_io_uses(&field.value, uses);
+            }
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            range,
+        } => {
+            let callee_name = path_name(callee);
+            if callee_name == "ctx.param" {
+                uses.path_params.push(PathParamUse {
+                    name: first_string_arg(args),
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            } else if callee_name == "req.json" {
+                uses.request_bodies.push(RequestBodyUse {
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            }
+
+            for arg in args {
+                collect_expr_io_uses(&arg.value, uses);
+            }
+        }
+        Expr::Try { value, .. } => collect_expr_io_uses(value, uses),
+    }
+}
+
+fn first_string_arg(args: &[CallArg]) -> Option<String> {
+    args.iter().find_map(|arg| {
+        if arg.label.is_some() {
+            return None;
+        }
+
+        let Expr::String { value, .. } = &arg.value else {
+            return None;
+        };
+        Some(value.clone())
+    })
+}
+
+fn single_type_arg_name(type_args: &[TypeExpr]) -> Option<String> {
+    match type_args {
+        [ty] => Some(type_name(ty)),
+        _ => None,
+    }
+}
+
+fn route_param_from_segment(segment: &str) -> RouteSegmentParam {
+    if let Some(name) = segment.strip_prefix(':') {
+        return RouteSegmentParam::Param(RoutePathParam {
+            name: name.to_string(),
+            ty: None,
+        });
+    }
+
+    if !(segment.starts_with('{') || segment.ends_with('}')) {
+        return RouteSegmentParam::None;
+    }
+
+    let Some(inner) = segment
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+    else {
+        return RouteSegmentParam::Malformed(
+            "typed route parameters must use `{name: Type}` inside one path segment",
+        );
+    };
+
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return RouteSegmentParam::Malformed("route parameter braces cannot be empty");
+    }
+
+    let (name, ty) = inner
+        .split_once(':')
+        .map_or((inner, None), |(name, ty)| (name.trim(), Some(ty.trim())));
+
+    if name.is_empty() {
+        return RouteSegmentParam::Malformed("route parameter name cannot be empty");
+    }
+
+    if let Some(ty) = ty {
+        if ty.is_empty() {
+            return RouteSegmentParam::Malformed("typed route parameter type cannot be empty");
+        }
+
+        if !is_simple_type_name(ty) {
+            return RouteSegmentParam::Malformed(
+                "route parameter types currently use a single builtin or local type name",
+            );
+        }
+    }
+
+    RouteSegmentParam::Param(RoutePathParam {
+        name: name.to_string(),
+        ty: ty.map(str::to_string),
+    })
+}
+
+fn is_http_method(method: &str) -> bool {
+    matches!(
+        method,
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+    )
+}
+
+fn route_method_allows_body(method: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH")
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "String" | "Text" | "Bool" | "Int" | "I64" | "U64" | "F64"
+    )
+}
+
+fn is_simple_type_name(value: &str) -> bool {
+    is_identifier(value)
+}

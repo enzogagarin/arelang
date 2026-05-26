@@ -21,10 +21,11 @@ crates/
   are-cli/           CLI entry point; owns commands like check, run, fmt
   are-diagnostics/   human and JSON diagnostic data model
   are-lexer/         source text to token stream
-  are-parser/        token stream to top-level AST
+  are-parser/        token stream to top-level AST, with parser support/test modules
   are-project/       manifest loading and reusable static check pipeline
   are-resolver/      top-level symbol binding and service route checks
-  are-typecheck/     type arity, duplicate fields, and HTTP service contract checks
+  are-typecheck/     type arity, duplicate fields, function-body checks, and HTTP service contracts
+  are-interpreter/   MVP function interpreter split into value, error, host, and runner modules
   are-http-runtime/  first HTTP MVP server for checked service projects
 ```
 
@@ -68,6 +69,13 @@ Current `are check` behavior:
 - resolve imports, declarations, service uses, and route handlers
 - typecheck function signatures, generic arity, route handlers, route body contracts, typed path params, and HTTP error mappers
 - emit human or JSON diagnostics
+
+Compiler implementation hygiene:
+
+- Rust is pinned through `rust-toolchain.toml` to keep local and CI behavior reproducible.
+- `are-parser` keeps grammar parsing in `lib.rs` and token/diagnostic helpers in `support.rs`.
+- `are-typecheck` keeps declaration orchestration in `lib.rs`, function-body checking in `body.rs`, HTTP route contracts in `http.rs`, and regression tests in `tests.rs`.
+- `are-interpreter` keeps the public runtime values, host boundary, and error model in separate modules before the evaluator grows further.
 
 Current `are fmt` behavior:
 

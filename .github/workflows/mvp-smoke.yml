@@ -31,8 +31,11 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
-          rustup default stable
+          RUST_TOOLCHAIN="$(awk -F '"' '/^channel/ { print $2 }' rust-toolchain.toml)"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -V
+          cargo -V
 
       - name: Cache Cargo
         uses: actions/cache@v5

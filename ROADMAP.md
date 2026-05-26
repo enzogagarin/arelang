@@ -31,6 +31,7 @@ Output:
 - parser tests for `users_api`: done
 - top-level resolver: done
 - parser recovery for common syntax errors: started
+- parser support/test module split: done
 
 Initial language items:
 
@@ -40,7 +41,8 @@ Initial language items:
 - `type`
 - `fn`
 - `service`
-- `route`
+- `route` legacy form
+- `get`/`post` method shorthand inside services
 - `let`
 - `return`
 - blocks and expressions
@@ -62,7 +64,10 @@ Output:
 - `Option<T>` arity checks: done
 - HTTP route handler signature checks: done
 - HTTP error mapper checks: done
-- `?` propagation checks: pending
+- `?` propagation checks: done
+- route body contract checks: done
+- typed path parameter contract checks: done
+- function body checker module split: done
 
 Definition of done:
 
@@ -73,11 +78,12 @@ Definition of done:
 
 Output:
 
-- expression interpreter
-- function calls
-- structs/enums at runtime
-- in-memory values
-- basic standard library hooks
+- expression interpreter: started
+- function calls: done for the MVP function slice
+- structs/enums at runtime: started
+- in-memory values: done for JSON, booleans, HTTP responses, enums, and unit
+- basic standard library hooks: started
+- interpreter value/error/host module split: done
 
 Definition of done:
 
@@ -88,12 +94,13 @@ Definition of done:
 
 Output:
 
-- `service` route registry: started
+- `service` route registry: done for one-service MVP projects
 - local server runner: done for `users_api`
 - request/response runtime types: started
-- JSON decode/encode MVP
-- route params
-- API error mapping
+- JSON decode/encode MVP: done for local structs/models with primitive fields
+- route params: done for legacy `:id` and typed `{id: UserId}` forms
+- route body contracts: done for `body Payload`
+- API error mapping: done through `Http.error_map`
 
 Definition of done:
 
@@ -108,14 +115,15 @@ Definition of done:
 
 Output:
 
-- `are fmt`: started
-- `are test`: started
-- `are check --json`
+- `are fmt`: done for parsed MVP syntax
+- `are test`: done for built-in MVP scenarios
+- `are check --json`: done
 - diagnostic fix suggestions: started
 - source snippet diagnostics: done
 - users API tests: started
 - generated users API template: done
 - MVP smoke script in CI: done
+- pinned Rust toolchain for reproducible CI: done
 
 Definition of done:
 

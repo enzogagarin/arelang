@@ -52,6 +52,7 @@ From the repository root, the current demos are intentionally a small set of com
 ./are check examples/users_api
 ./are check examples/users_api --json
 ./are run examples/users_api
+./scripts/mvp-smoke.sh
 cargo test
 ```
 
@@ -69,6 +70,8 @@ are run examples/hello_api
 ```
 
 `are new` creates a minimal HTTP server project with an `are.toml` manifest and a `main.are` file. The generated project starts with a single `GET /ping` route.
+
+`scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, tests, clippy, static checks for the bundled examples, creates a fresh generated API, starts real HTTP servers on high local ports, and verifies responses with `curl`.
 
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
 

@@ -87,4 +87,17 @@ Diagnostics should include:
 - reason
 - fixes
 
+Human diagnostic output should render the same payload with a source snippet:
+
+```text
+error[E_RESOLVE_0002]: unknown route handler `create_usr`
+  --> users_api/main.are:61:28
+   |
+61 |     route POST "/users" -> create_usr
+   |                            ^^^^^^^^^^
+   |
+note: declare a function with this name before wiring it in a service route
+help: did you mean `create_user`?
+```
+
 Security-impacting fixes should not be automatically applied.

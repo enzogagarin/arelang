@@ -3,7 +3,7 @@ use are_ast::{
     ModelFieldAttr, Module, Param, Path, Pattern, RouteDecl, ServiceDecl, Stmt, StructDecl,
     TypeDecl, TypeExpr, UseDecl,
 };
-use are_diagnostics::{Diagnostic, SourceRange};
+use are_diagnostics::{Diagnostic, SourceRange, best_name_suggestion};
 use are_semantics::{Builtin, builtin_by_callee};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
@@ -396,13 +396,18 @@ impl<'a> TypeChecker<'a> {
 
         let mapper_name = &mapper_path.segments[0];
         let Some(mapper) = self.functions.get(mapper_name).copied() else {
-            self.diagnostics.push(Diagnostic::error(
+            let mut diagnostic = Diagnostic::error(
                 "E_HTTP_0305",
                 &self.file,
                 mapper_path.range,
                 format!("unknown HTTP error mapper `{mapper_name}`"),
                 "declare a mapper function before using it in the service",
-            ));
+            );
+            if let Some(suggestion) = self.function_suggestion(mapper_name) {
+                diagnostic =
+                    diagnostic.with_fix(format!("did you mean `{suggestion}`?"), Some(suggestion));
+            }
+            self.diagnostics.push(diagnostic);
             return;
         };
 
@@ -667,6 +672,17 @@ impl<'a> TypeChecker<'a> {
             .with_fix("rename this item or remove the duplicate", None),
         );
     }
+
+    fn function_suggestion(&self, name: &str) -> Option<String> {
+        let mut candidates = self
+            .functions
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+
+        best_name_suggestion(name, candidates).map(str::to_string)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -873,11 +889,14 @@ impl BodyChecker<'_> {
         } = &arm.pattern;
 
         let Some(variant) = variants.iter().find(|variant| variant.name == *name) else {
-            self.error(
+            let suggestion =
+                Self::suggestion(name, variants.iter().map(|variant| variant.name.as_str()));
+            self.error_with_suggestion(
                 "E_BODY_0012",
                 *range,
                 format!("unknown enum variant `{name}`"),
                 "match arms must use variants from the matched enum",
+                suggestion,
             );
             self.check_statement(&arm.body, function_name);
             return;
@@ -934,15 +953,19 @@ impl BodyChecker<'_> {
             return BodyType::Unknown;
         };
 
-        let mut current = self.env.get(first).cloned().unwrap_or_else(|| {
-            self.error(
+        let mut current = if let Some(binding) = self.env.get(first) {
+            binding.clone()
+        } else {
+            let suggestion = Self::suggestion(first, self.env.keys().map(String::as_str));
+            self.error_with_suggestion(
                 "E_BODY_0001",
                 path.range,
                 format!("unknown binding `{first}`"),
                 "bindings must be declared with `let` or as function parameters before use",
+                suggestion,
             );
             BodyType::Unknown
-        });
+        };
 
         for segment in path.segments.iter().skip(1) {
             current = self.field_type(&current, segment, path.range);
@@ -968,11 +991,16 @@ impl BodyChecker<'_> {
                 .iter()
                 .find(|field| field.name == field_name)
             else {
-                self.error(
+                let suggestion = Self::suggestion(
+                    field_name,
+                    struct_decl.fields.iter().map(|field| field.name.as_str()),
+                );
+                self.error_with_suggestion(
                     "E_BODY_0002",
                     range,
                     format!("struct `{type_name}` has no field `{field_name}`"),
                     "check the field name or update the struct declaration",
+                    suggestion,
                 );
                 return BodyType::Unknown;
             };
@@ -986,11 +1014,16 @@ impl BodyChecker<'_> {
                 .iter()
                 .find(|field| field.name == field_name)
             else {
-                self.error(
+                let suggestion = Self::suggestion(
+                    field_name,
+                    model_decl.fields.iter().map(|field| field.name.as_str()),
+                );
+                self.error_with_suggestion(
                     "E_BODY_0002",
                     range,
                     format!("model `{type_name}` has no field `{field_name}`"),
                     "check the field name or update the model declaration",
+                    suggestion,
                 );
                 return BodyType::Unknown;
             };
@@ -1029,11 +1062,20 @@ impl BodyChecker<'_> {
             return self.check_user_function_call(function, type_args, args, range);
         }
 
-        self.error(
+        let suggestion = if callee.segments.len() == 1 {
+            Self::suggestion(
+                &callee.segments[0],
+                self.functions.keys().map(String::as_str),
+            )
+        } else {
+            None
+        };
+        self.error_with_suggestion(
             "E_BODY_0003",
             range,
             format!("unsupported call `{callee_name}`"),
             "calls must target a known local function or supported std backend function",
+            suggestion,
         );
         BodyType::Unknown
     }
@@ -1134,7 +1176,24 @@ impl BodyChecker<'_> {
             return None;
         };
 
-        let variant = self.enum_variant(enum_name, variant_name)?;
+        let Some(variant) = self.enum_variant(enum_name, variant_name) else {
+            if let Some(variants) = self.enum_variants(enum_name) {
+                let suggestion = Self::suggestion(
+                    variant_name,
+                    variants.iter().map(|variant| variant.name.as_str()),
+                );
+                self.error_with_suggestion(
+                    "E_BODY_0012",
+                    range,
+                    format!("unknown enum variant `{variant_name}`"),
+                    "enum constructors must use variants from the target enum",
+                    suggestion,
+                );
+                return Some(BodyType::Named(enum_name.clone()));
+            }
+
+            return None;
+        };
         if !type_args.is_empty() {
             self.error(
                 "E_BODY_0014",
@@ -1606,8 +1665,30 @@ impl BodyChecker<'_> {
         problem: impl Into<String>,
         reason: impl Into<String>,
     ) {
-        self.diagnostics
-            .push(Diagnostic::error(code, self.file, range, problem, reason));
+        self.error_with_suggestion(code, range, problem, reason, None);
+    }
+
+    fn error_with_suggestion(
+        &mut self,
+        code: impl Into<String>,
+        range: SourceRange,
+        problem: impl Into<String>,
+        reason: impl Into<String>,
+        suggestion: Option<String>,
+    ) {
+        let mut diagnostic = Diagnostic::error(code, self.file, range, problem, reason);
+        if let Some(suggestion) = suggestion {
+            diagnostic =
+                diagnostic.with_fix(format!("did you mean `{suggestion}`?"), Some(suggestion));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn suggestion<'b>(name: &str, candidates: impl IntoIterator<Item = &'b str>) -> Option<String> {
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort_unstable();
+
+        best_name_suggestion(name, candidates).map(str::to_string)
     }
 }
 
@@ -2025,7 +2106,7 @@ mod tests {
 
             fn create(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
                 let input = req.json<CreateUserInput>()?
-                ensure validate.email(input.missing), ApiError.Failed
+                ensure validate.email(input.emali), ApiError.Failed
                 return Http.Response.created(input)
             }
 
@@ -2040,6 +2121,7 @@ mod tests {
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
         assert_eq!(diagnostics[0].code, "E_BODY_0002");
+        assert_eq!(diagnostics[0].fixes[0].label, "did you mean `email`?");
     }
 
     #[test]
@@ -2167,6 +2249,28 @@ mod tests {
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
         assert_eq!(diagnostics[0].code, "E_BODY_0006");
+    }
+
+    #[test]
+    fn suggests_nearby_enum_variants() {
+        let source = r#"
+            enum ApiError {
+                InvalidInput(message: String)
+            }
+
+            fn validate() -> Result<String, ApiError> {
+                ensure false, ApiError.InvaldInput("bad")
+                return "ok"
+            }
+        "#;
+
+        let diagnostics = diagnostics_for("test.are", source);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0].code, "E_BODY_0012");
+        assert_eq!(
+            diagnostics[0].fixes[0].label,
+            "did you mean `InvalidInput`?"
+        );
     }
 
     fn diagnostics_for(file_name: &str, source: &str) -> Vec<are_diagnostics::Diagnostic> {

@@ -2,7 +2,7 @@ use are_ast::{
     EnumDecl, FunctionDecl, Item, ModelDecl, Module, Path, ServiceDecl, StructDecl, TypeDecl,
     TypeExpr, UseDecl,
 };
-use are_diagnostics::{Diagnostic, SourceRange};
+use are_diagnostics::{Diagnostic, SourceRange, best_name_suggestion};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
 
@@ -211,6 +211,7 @@ impl<'a> Resolver<'a> {
                 "E_RESOLVE_0003",
                 format!("unknown type namespace `{root}`"),
                 "qualified type paths must start with an import alias or a declared type",
+                self.import_or_type_suggestion(root),
             );
             return;
         }
@@ -232,6 +233,7 @@ impl<'a> Resolver<'a> {
                 "E_RESOLVE_0003",
                 format!("unknown type `{root}`"),
                 "declare the type in this module, import it, or use a builtin type",
+                self.type_suggestion(root),
             ),
         }
     }
@@ -250,6 +252,7 @@ impl<'a> Resolver<'a> {
             "E_RESOLVE_0002",
             format!("unknown symbol `{root}`"),
             "service use paths must start with an import alias or local declaration",
+            self.symbol_suggestion(root),
         );
     }
 
@@ -283,6 +286,7 @@ impl<'a> Resolver<'a> {
                 "E_RESOLVE_0002",
                 format!("unknown route handler `{handler}`"),
                 "declare a function with this name before wiring it in a service route",
+                self.function_suggestion(handler),
             ),
         }
     }
@@ -308,10 +312,49 @@ impl<'a> Resolver<'a> {
         code: &'static str,
         problem: String,
         reason: &'static str,
+        suggestion: Option<String>,
     ) {
-        self.diagnostics.push(Diagnostic::error(
-            code, &self.file, path.range, problem, reason,
-        ));
+        let mut diagnostic = Diagnostic::error(code, &self.file, path.range, problem, reason);
+        if let Some(suggestion) = suggestion {
+            diagnostic =
+                diagnostic.with_fix(format!("did you mean `{suggestion}`?"), Some(suggestion));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn function_suggestion(&self, name: &str) -> Option<String> {
+        self.suggestion(name, |kind| kind == SymbolKind::Function)
+    }
+
+    fn type_suggestion(&self, name: &str) -> Option<String> {
+        self.suggestion(name, SymbolKind::is_type_like)
+    }
+
+    fn import_or_type_suggestion(&self, name: &str) -> Option<String> {
+        self.suggestion(name, |kind| {
+            kind == SymbolKind::Import || kind.is_type_like()
+        })
+    }
+
+    fn symbol_suggestion(&self, name: &str) -> Option<String> {
+        self.suggestion(name, |_| true)
+    }
+
+    fn suggestion(&self, name: &str, accepts: impl Fn(SymbolKind) -> bool) -> Option<String> {
+        let mut candidates = self
+            .symbols
+            .iter()
+            .filter_map(|(candidate, symbol)| accepts(symbol.kind).then_some(candidate.as_str()))
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+
+        best_name_suggestion(name, candidates).map(str::to_string)
+    }
+}
+
+impl SymbolKind {
+    const fn is_type_like(self) -> bool {
+        matches!(self, Self::Type | Self::Struct | Self::Enum | Self::Model)
     }
 }
 
@@ -355,14 +398,16 @@ mod tests {
     fn reports_unknown_route_handler() {
         let source = r#"
             struct AppState {}
+            fn create_user() {}
 
             service UsersApi(state: AppState) {
-                route GET "/missing" -> missing_handler
+                route GET "/missing" -> create_usr
             }
         "#;
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "E_RESOLVE_0002");
+        assert_eq!(diagnostics[0].fixes[0].label, "did you mean `create_user`?");
     }
 
     #[test]
@@ -379,13 +424,16 @@ mod tests {
     #[test]
     fn reports_unknown_type_reference() {
         let source = r"
+            struct UserStore {}
+
             struct AppState {
-                users: MissingStore
+                users: UserSotre
             }
         ";
         let diagnostics = diagnostics_for("test.are", source);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "E_RESOLVE_0003");
+        assert_eq!(diagnostics[0].fixes[0].label, "did you mean `UserStore`?");
     }
 
     #[test]

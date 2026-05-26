@@ -6,6 +6,7 @@ use are_interpreter::{
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -25,7 +26,8 @@ impl std::fmt::Display for RuntimeError {
             Self::StaticChecks(check) => {
                 writeln!(f, "static checks failed before runtime start")?;
                 for diagnostic in &check.diagnostics {
-                    writeln!(f, "{diagnostic}")?;
+                    let source = fs::read_to_string(&diagnostic.file).ok();
+                    writeln!(f, "{}", diagnostic.render(source.as_deref()))?;
                 }
                 Ok(())
             }

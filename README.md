@@ -83,7 +83,20 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 
 `scripts/mvp-smoke.sh` is the current MVP health check. It runs formatter checks, tests, clippy, static checks for the bundled examples, creates fresh minimal and users-template APIs, starts real HTTP servers on high local ports, and verifies responses with `curl`.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, and `?` usage.
+
+Example human diagnostic:
+
+```text
+error[E_RESOLVE_0002]: unknown route handler `create_usr`
+  --> users_api/main.are:61:28
+   |
+61 |     route POST "/users" -> create_usr
+   |                            ^^^^^^^^^^
+   |
+note: declare a function with this name before wiring it in a service route
+help: did you mean `create_user`?
+```
 
 `examples/hello_api` is the smallest runnable HTTP server. It listens on `127.0.0.1:8081` and responds to `GET /ping` from an Arelang function body.
 

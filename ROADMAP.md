@@ -110,7 +110,8 @@ Output:
 - `are fmt`
 - `are test`
 - `are check --json`
-- diagnostic fix suggestions
+- diagnostic fix suggestions: started
+- source snippet diagnostics: done
 - users API tests: started
 - generated users API template: done
 - MVP smoke script in CI: done

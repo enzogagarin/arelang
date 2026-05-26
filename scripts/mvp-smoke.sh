@@ -138,6 +138,21 @@ generated_users_log="$LAST_LOG_FILE"
 wait_for_http "http://127.0.0.1:18094/health" "$generated_users_log"
 assert_users_api_flow "http://127.0.0.1:18094" "generated_users"
 
+log "diagnostic UX smoke"
+BROKEN_USERS="$TMP_DIR/broken_users_api"
+cp -R "$GENERATED_USERS" "$BROKEN_USERS"
+sed 's/route POST "\/users" -> create_user/route POST "\/users" -> create_usr/' \
+    "$BROKEN_USERS/main.are" >"$BROKEN_USERS/main.are.tmp"
+mv "$BROKEN_USERS/main.are.tmp" "$BROKEN_USERS/main.are"
+
+if "$ROOT_DIR/are" check "$BROKEN_USERS" >"$TMP_DIR/broken_check.txt" 2>&1; then
+    printf 'expected broken users API check to fail\n' >&2
+    exit 1
+fi
+assert_file_contains "$TMP_DIR/broken_check.txt" 'error[E_RESOLVE_0002]: unknown route handler `create_usr`' "broken check diagnostic"
+assert_file_contains "$TMP_DIR/broken_check.txt" 'route POST "/users" -> create_usr' "broken check source snippet"
+assert_file_contains "$TMP_DIR/broken_check.txt" 'help: did you mean `create_user`?' "broken check suggestion"
+
 log "users API HTTP smoke"
 USERS_API="$TMP_DIR/users_api"
 cp -R "$ROOT_DIR/examples/users_api" "$USERS_API"

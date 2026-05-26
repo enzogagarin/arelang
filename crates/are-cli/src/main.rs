@@ -3,6 +3,7 @@ use are_http_runtime::run_project;
 use are_project::check_path;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -200,15 +201,24 @@ fn run_check(path: &Path, json: bool) -> ExitCode {
     } else if ok {
         println!("checked {} Arelang file(s)", check.files_checked);
     } else {
-        for diagnostic in &check.diagnostics {
-            eprintln!("{diagnostic}");
-        }
+        print_human_diagnostics(&check.diagnostics);
     }
 
     if ok {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+fn print_human_diagnostics(diagnostics: &[Diagnostic]) {
+    let mut sources = HashMap::<PathBuf, Option<String>>::new();
+
+    for diagnostic in diagnostics {
+        let source = sources
+            .entry(diagnostic.file.clone())
+            .or_insert_with(|| fs::read_to_string(&diagnostic.file).ok());
+        eprintln!("{}", diagnostic.render(source.as_deref()));
     }
 }
 

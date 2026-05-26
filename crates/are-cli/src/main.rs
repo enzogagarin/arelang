@@ -1,6 +1,8 @@
 use are_diagnostics::Diagnostic;
 use are_format::format_source;
-use are_http_runtime::{TestReport, run_project, test_project};
+use are_http_runtime::{
+    HttpContractManifest, TestReport, inspect_project, run_project, test_project,
+};
 use are_project::check_path;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -80,6 +82,17 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Inspect the checked HTTP contract manifest without running a server.
+    Inspect {
+        /// Project directory to inspect.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Emit the contract manifest as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -141,6 +154,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Test { path, json } => run_test(&path, json),
+        Command::Inspect { path, json } => run_inspect(&path, json),
     }
 }
 
@@ -171,6 +185,7 @@ fn create_project(
     println!("created {} ({})", path.display(), template.label());
     println!("next:");
     println!("  ./are check {}", path.display());
+    println!("  ./are inspect {}", path.display());
     println!("  ./are test {}", path.display());
     println!("  ./are run {}", path.display());
     match template {
@@ -320,18 +335,12 @@ fn print_test_report(report: &TestReport) {
     println!("service {}", report.service);
     println!("routes:");
     for route in &report.routes {
-        let mut contract = match &route.body_type {
-            Some(body_type) => format!("{} body {body_type}", route.path),
-            None => route.path.clone(),
-        };
-        if let Some(response_type) = &route.response_type {
-            contract.push_str(" returns ");
-            contract.push_str(response_type);
-        }
-        if let Some(status) = route.status {
-            contract.push_str(" status ");
-            contract.push_str(&status.to_string());
-        }
+        let contract = route_contract_label(
+            &route.path,
+            route.body_type.as_deref(),
+            route.response_type.as_deref(),
+            route.status,
+        );
         println!(
             "  {:<6} {:<36} -> {}",
             route.method, contract, route.handler
@@ -350,6 +359,72 @@ fn print_test_report(report: &TestReport) {
             println!("    - {check}");
         }
     }
+}
+
+fn run_inspect(path: &Path, json: bool) -> ExitCode {
+    let manifest = match inspect_project(path) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if json {
+        match serde_json::to_string_pretty(&manifest) {
+            Ok(encoded) => println!("{encoded}"),
+            Err(err) => {
+                eprintln!("failed to encode inspect JSON: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        print_contract_manifest(&manifest);
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn print_contract_manifest(manifest: &HttpContractManifest) {
+    println!("service {}", manifest.service);
+    if let Some(error_mapper) = &manifest.error_mapper {
+        println!("error_mapper {error_mapper}");
+    }
+
+    println!("routes:");
+    for route in &manifest.routes {
+        let contract = route_contract_label(
+            &route.path,
+            route.body_type.as_deref(),
+            route.response_type.as_deref(),
+            route.status,
+        );
+        println!(
+            "  {:<6} {:<36} -> {}",
+            route.method, contract, route.handler
+        );
+    }
+}
+
+fn route_contract_label(
+    path: &str,
+    body_type: Option<&str>,
+    response_type: Option<&str>,
+    status: Option<u16>,
+) -> String {
+    let mut contract = match body_type {
+        Some(body_type) => format!("{path} body {body_type}"),
+        None => path.to_string(),
+    };
+    if let Some(response_type) = response_type {
+        contract.push_str(" returns ");
+        contract.push_str(response_type);
+    }
+    if let Some(status) = status {
+        contract.push_str(" status ");
+        contract.push_str(&status.to_string());
+    }
+    contract
 }
 
 fn collect_are_files(path: &Path) -> Result<Vec<PathBuf>, String> {
@@ -579,8 +654,8 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        kebab_case, minimal_source, package_name_from_path, pascal_case, service_name_from_package,
-        users_source,
+        kebab_case, minimal_source, package_name_from_path, pascal_case, route_contract_label,
+        service_name_from_package, users_source,
     };
     use std::path::Path;
 
@@ -599,6 +674,14 @@ mod tests {
         assert!(source.contains("fn ping"));
         assert!(source.contains("service HelloApi"));
         assert!(source.contains(r#"get "/ping" -> ping returns PingResponse status 200"#));
+    }
+
+    #[test]
+    fn renders_route_contract_labels() {
+        assert_eq!(
+            route_contract_label("/users", Some("CreateUserInput"), Some("User"), Some(201)),
+            "/users body CreateUserInput returns User status 201"
+        );
     }
 
     #[test]

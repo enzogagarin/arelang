@@ -55,6 +55,7 @@ source.are
 are check examples/users_api
 are check --json examples/users_api
 are fmt examples/users_api --check
+are inspect examples/users_api --json
 are test examples/users_api
 are run examples/users_api
 ```
@@ -77,6 +78,7 @@ Compiler implementation hygiene:
 - `are-parser` keeps grammar parsing in `lib.rs` and token/diagnostic helpers in `support.rs`.
 - `are-typecheck` keeps declaration orchestration in `lib.rs`, function-body checking in `body.rs`, HTTP route contracts in `http.rs`, and regression tests in `tests.rs`.
 - `are-interpreter` keeps the public runtime values, host boundary, and error model in separate modules before the evaluator grows further.
+- `are-http-runtime` keeps the checked service contract manifest, server loop, response contract application, JSON schema validation, Arelang host boundary, model-backed store, built-in scenarios, and regression tests in separate modules.
 
 Current `are fmt` behavior:
 
@@ -92,6 +94,7 @@ Current `are run` behavior:
 - require `target = "server"`
 - run static checks
 - extract the checked service route registry
+- build the checked HTTP contract manifest from the service declaration
 - wrap domain payload handler results using the route response/status contract
 - persist MVP model data through the model-backed in-memory store
 - validate route-level body, path, response, and status contracts at the host boundary
@@ -104,6 +107,12 @@ Current `are test` behavior:
 - expose route body, response, status, typed path param, and handler data in the test report
 - execute built-in MVP runtime scenarios without opening a TCP listener
 - emit human or JSON test reports
+
+Current `are inspect` behavior:
+
+- run the same static checks and runtime project preparation as `are run`
+- build the checked HTTP contract manifest without opening a TCP listener
+- emit service, routes, body type, response type, status, typed path params, handler, and error mapper data in human or JSON form
 
 ## Diagnostic Shape
 

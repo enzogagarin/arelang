@@ -98,6 +98,7 @@ Definition of done:
 Output:
 
 - `service` route registry: done for one-service MVP projects
+- checked HTTP contract manifest: done for service, routes, body, response, status, typed params, handlers, and error mapper
 - local server runner: done for `users_api`
 - request/response runtime types: started
 - JSON decode/encode MVP: done for local structs/models with primitive fields
@@ -119,6 +120,7 @@ Definition of done:
 - successful domain payloads are wrapped into HTTP responses by the route contract: done
 - function body interpreter replaces the temporary users API adapter: done
 - `ctx.db.users` is resolved from `model User` rather than a users-only runtime adapter: done
+- HTTP runtime is split into manifest, server, response, schema, host, store, scenario, and test modules: done
 
 ## Milestone 5: Backend Quality Loop
 
@@ -126,6 +128,7 @@ Output:
 
 - `are fmt`: done for parsed MVP syntax
 - `are test`: done for built-in MVP scenarios
+- `are inspect`: done for checked HTTP contract manifest output
 - `are check --json`: done
 - diagnostic fix suggestions: started
 - source snippet diagnostics: done

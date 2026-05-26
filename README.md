@@ -33,6 +33,7 @@ Native codegen, arena escape checking, package publishing, database adapters, an
 ```sh
 are fmt
 are check --json
+are inspect --json
 are run examples/users_api
 are test
 are audit
@@ -50,6 +51,7 @@ From the repository root, the current demos are intentionally a small set of com
 ./are new scratch_users --template users --port 8091
 ./are fmt scratch_api --check
 ./are check scratch_api
+./are inspect scratch_api
 ./are test scratch_api
 ./are run scratch_api
 ./are fmt examples/hello_api --check
@@ -59,6 +61,8 @@ From the repository root, the current demos are intentionally a small set of com
 ./are fmt examples/users_api --check
 ./are check examples/users_api
 ./are check examples/users_api --json
+./are inspect examples/users_api
+./are inspect examples/users_api --json
 ./are test examples/users_api
 ./are test examples/users_api --json
 ./are run examples/users_api
@@ -76,6 +80,7 @@ After that, the commands become:
 
 ```sh
 are check examples/hello_api
+are inspect examples/hello_api
 are fmt examples/hello_api --check
 are test examples/hello_api
 are run examples/hello_api
@@ -97,6 +102,10 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 `are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON decoding, validation, route params, database access, return types, route response/status contracts, and `?` usage.
 
 `are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
+
+The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, response type, success status, handler binding, and error mapper. `are run` uses it to route and validate responses; `are test --json` exposes the same route contract data for tools.
+
+`are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface.
 
 Example human diagnostic:
 

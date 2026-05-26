@@ -33,6 +33,9 @@ pub enum InterpretError {
     ExpectedJson {
         context: String,
     },
+    ExpectedString {
+        context: String,
+    },
     ExpectedInteger {
         context: String,
     },
@@ -67,6 +70,7 @@ impl std::fmt::Display for InterpretError {
                 write!(f, "`{callee}` is missing argument `{label}`")
             }
             Self::ExpectedJson { context } => write!(f, "`{context}` expected a JSON value"),
+            Self::ExpectedString { context } => write!(f, "`{context}` expected a string value"),
             Self::ExpectedInteger { context } => {
                 write!(f, "`{context}` expected an integer value")
             }
@@ -131,6 +135,25 @@ pub trait Host {
     ///
     /// Returns an error when the host cannot persist the value.
     fn insert_user(&mut self, input: JsonValue) -> Result<JsonValue, InterpretError>;
+
+    /// Read a route path parameter by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the parameter is missing or cannot be decoded as
+    /// the requested type.
+    fn read_path_param(
+        &mut self,
+        type_name: Option<&str>,
+        name: &str,
+    ) -> Result<JsonValue, InterpretError>;
+
+    /// Read a user-like JSON value from host state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the id is invalid or the value does not exist.
+    fn get_user(&mut self, id: JsonValue) -> Result<JsonValue, InterpretError>;
 }
 
 /// Interpret an Arelang function body.
@@ -291,6 +314,17 @@ impl<'a, H: Host> Interpreter<'a, H> {
                 let input = self.single_json_arg(callee, args)?;
                 self.host.insert_user(input).map(Value::Json)
             }
+            "ctx.param" => {
+                let name = self.single_string_arg(callee, args)?;
+                let type_name = type_args.first().and_then(type_expr_name);
+                self.host
+                    .read_path_param(type_name.as_deref(), &name)
+                    .map(Value::Json)
+            }
+            "ctx.state.users.get" => {
+                let id = self.single_json_arg(callee, args)?;
+                self.host.get_user(id).map(Value::Json)
+            }
             _ => Err(InterpretError::UnsupportedExpression(callee.to_string())),
         }
     }
@@ -313,6 +347,20 @@ impl<'a, H: Host> Interpreter<'a, H> {
         args: &[CallArg],
     ) -> Result<JsonValue, InterpretError> {
         self.positional_json_arg(callee, args, 0, 1)
+    }
+
+    fn single_string_arg(
+        &mut self,
+        callee: &str,
+        args: &[CallArg],
+    ) -> Result<String, InterpretError> {
+        let value = self.single_json_arg(callee, args)?;
+        value
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| InterpretError::ExpectedString {
+                context: callee.to_string(),
+            })
     }
 
     fn positional_json_arg(
@@ -395,6 +443,20 @@ impl Host for NoopHost {
             "ctx.state.users.insert".into(),
         ))
     }
+
+    fn read_path_param(
+        &mut self,
+        _type_name: Option<&str>,
+        _name: &str,
+    ) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression("ctx.param".into()))
+    }
+
+    fn get_user(&mut self, _id: JsonValue) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression(
+            "ctx.state.users.get".into(),
+        ))
+    }
 }
 
 fn type_expr_name(ty: &TypeExpr) -> Option<String> {
@@ -423,6 +485,7 @@ mod tests {
     use are_ast::{FunctionDecl, Item};
     use are_lexer::lex_source;
     use are_parser::parse_tokens;
+    use std::collections::HashMap;
     use std::path::Path;
 
     #[test]
@@ -474,6 +537,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn interprets_get_user_flow_with_host_effects() {
+        let create_user = users_api_function("create_user");
+        let get_user = users_api_function("get_user");
+        let mut host = TestHost::new(r#"{"email":"ada@example.com","name":"Ada"}"#);
+
+        interpret_function_with_host(&create_user, &mut host).expect("create_user runs");
+        host.set_path_param("id", "1");
+        let value = interpret_function_with_host(&get_user, &mut host).expect("get_user runs");
+
+        assert_eq!(
+            value,
+            Value::HttpResponse(HttpResponseValue {
+                status: 200,
+                body: serde_json::json!({
+                    "id": 1,
+                    "email": "ada@example.com",
+                    "name": "Ada",
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn propagates_get_user_not_found_errors() {
+        let get_user = users_api_function("get_user");
+        let mut host = TestHost::new("");
+        host.set_path_param("id", "42");
+
+        let err = interpret_function_with_host(&get_user, &mut host).expect_err("user missing");
+        let response = err.as_http_response().expect("not found maps to HTTP");
+
+        assert_eq!(response.status, 404);
+        assert_eq!(response.body, serde_json::json!({ "error": "not_found" }));
+    }
+
     fn users_api_function(name: &str) -> FunctionDecl {
         let source = include_str!("../../../examples/users_api/main.are");
         let file = Path::new("examples/users_api/main.are");
@@ -499,6 +598,8 @@ mod tests {
     struct TestHost {
         request_body: String,
         next_id: u64,
+        path_params: HashMap<String, String>,
+        users: HashMap<u64, serde_json::Value>,
     }
 
     impl TestHost {
@@ -506,7 +607,13 @@ mod tests {
             Self {
                 request_body: request_body.to_string(),
                 next_id: 0,
+                path_params: HashMap::new(),
+                users: HashMap::new(),
             }
+        }
+
+        fn set_path_param(&mut self, name: &str, value: &str) {
+            self.path_params.insert(name.to_string(), value.to_string());
         }
     }
 
@@ -559,11 +666,43 @@ mod tests {
             input: serde_json::Value,
         ) -> Result<serde_json::Value, InterpretError> {
             self.next_id += 1;
-            Ok(serde_json::json!({
+            let user = serde_json::json!({
                 "id": self.next_id,
                 "email": input["email"],
                 "name": input["name"],
-            }))
+            });
+            self.users.insert(self.next_id, user.clone());
+            Ok(user)
+        }
+
+        fn read_path_param(
+            &mut self,
+            type_name: Option<&str>,
+            name: &str,
+        ) -> Result<serde_json::Value, InterpretError> {
+            let Some(value) = self.path_params.get(name) else {
+                return Err(InterpretError::raised_json_error(400, "missing_id"));
+            };
+
+            if type_name == Some("UserId") {
+                let id = value
+                    .parse::<u64>()
+                    .map_err(|_| InterpretError::raised_json_error(400, "invalid_id"))?;
+                return Ok(serde_json::json!(id));
+            }
+
+            Ok(serde_json::Value::String(value.clone()))
+        }
+
+        fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
+            let Some(id) = id.as_u64() else {
+                return Err(InterpretError::raised_json_error(400, "invalid_id"));
+            };
+
+            self.users
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| InterpretError::raised_json_error(404, "not_found"))
         }
     }
 }

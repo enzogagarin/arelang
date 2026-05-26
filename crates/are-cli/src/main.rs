@@ -34,7 +34,7 @@ enum Command {
         path: PathBuf,
     },
 
-    /// Run an Arelang project. HTTP runtime support is the next milestone.
+    /// Run an Arelang HTTP server project.
     Run {
         /// Project directory to run.
         #[arg(default_value = ".")]

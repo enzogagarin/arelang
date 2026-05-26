@@ -909,6 +909,24 @@ mod tests {
         assert_eq!(block.statements.len(), 5);
         assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
         assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
+
+        let get_user = module
+            .items
+            .iter()
+            .find_map(|item| {
+                if let Item::Function(function) = item {
+                    (function.name == "get_user").then_some(function)
+                } else {
+                    None
+                }
+            })
+            .expect("get_user function");
+        let FunctionBody::Parsed { block } = &get_user.body else {
+            panic!("get_user body should parse into statements");
+        };
+        assert_eq!(block.statements.len(), 3);
+        assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
+        assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
     }
 
     #[test]

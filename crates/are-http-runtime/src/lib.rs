@@ -285,8 +285,9 @@ fn users_api_response(
     };
 
     match handler {
-        "health" | "create_user" => interpreted_response(state, functions, handler, body),
-        "get_user" => get_user(state, &params),
+        "health" | "create_user" | "get_user" => {
+            interpreted_response(state, functions, handler, &params, body)
+        }
         _ => error_response(500, "unsupported_handler"),
     }
 }
@@ -295,6 +296,7 @@ fn interpreted_response(
     state: &UsersApiState,
     functions: &RuntimeFunctions,
     handler: &str,
+    params: &HashMap<String, String>,
     body: &str,
 ) -> RuntimeResponse {
     let Some(function) = functions.get(handler) else {
@@ -302,6 +304,7 @@ fn interpreted_response(
     };
     let mut host = UsersApiHost {
         state,
+        params,
         request_body: body,
     };
 
@@ -328,6 +331,7 @@ fn interpreted_response(
 
 struct UsersApiHost<'a> {
     state: &'a UsersApiState,
+    params: &'a HashMap<String, String>,
     request_body: &'a str,
 }
 
@@ -406,31 +410,47 @@ impl Host for UsersApiHost<'_> {
 
         Ok(serde_json::to_value(user).expect("user serializes"))
     }
+
+    fn read_path_param(
+        &mut self,
+        type_name: Option<&str>,
+        name: &str,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let Some(value) = self.params.get(name) else {
+            return Err(InterpretError::raised_json_error(400, "missing_id"));
+        };
+
+        if type_name == Some("UserId") {
+            let id = value
+                .parse::<u64>()
+                .map_err(|_| InterpretError::raised_json_error(400, "invalid_id"))?;
+            return Ok(serde_json::json!(id));
+        }
+
+        Ok(serde_json::Value::String(value.clone()))
+    }
+
+    fn get_user(&mut self, id: serde_json::Value) -> Result<serde_json::Value, InterpretError> {
+        let Some(id) = id.as_u64() else {
+            return Err(InterpretError::raised_json_error(400, "invalid_id"));
+        };
+
+        let inner = self
+            .state
+            .inner
+            .lock()
+            .expect("users api state lock poisoned");
+        let Some(user) = inner.users.get(&id) else {
+            return Err(InterpretError::raised_json_error(404, "not_found"));
+        };
+
+        Ok(serde_json::to_value(user).expect("user serializes"))
+    }
 }
 
 fn is_create_user_input(value: &serde_json::Value) -> bool {
     value.get("email").is_some_and(serde_json::Value::is_string)
         && value.get("name").is_some_and(serde_json::Value::is_string)
-}
-
-fn get_user(state: &UsersApiState, params: &HashMap<String, String>) -> RuntimeResponse {
-    let Some(raw_id) = params.get("id") else {
-        return error_response(400, "missing_id");
-    };
-
-    let Ok(id) = raw_id.parse::<u64>() else {
-        return error_response(400, "invalid_id");
-    };
-
-    let inner = state.inner.lock().expect("users api state lock poisoned");
-    let Some(user) = inner.users.get(&id) else {
-        return error_response(404, "not_found");
-    };
-
-    RuntimeResponse {
-        status: 200,
-        body: serde_json::to_value(user).expect("user serializes"),
-    }
 }
 
 fn error_response(status: u16, error: &str) -> RuntimeResponse {

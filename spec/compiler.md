@@ -25,6 +25,7 @@ crates/
   are-project/       manifest loading and reusable static check pipeline
   are-resolver/      top-level symbol binding and service route checks
   are-typecheck/     type arity, duplicate fields, function-body checks, and HTTP service contracts
+  are-audit/         production-shape audit checks for contracts and capabilities
   are-interpreter/   MVP function interpreter split into value, error, host, and runner modules
   are-http-runtime/  first HTTP MVP server for checked service projects
 ```
@@ -56,6 +57,7 @@ are check examples/users_api
 are check --json examples/users_api
 are fmt examples/users_api --check
 are inspect examples/users_api --json
+are audit examples/users_api --json
 are test examples/users_api
 are run examples/users_api
 ```
@@ -114,6 +116,15 @@ Current `are inspect` behavior:
 - run the same static checks and runtime project preparation as `are run`
 - build the checked HTTP contract manifest without opening a TCP listener
 - emit service, routes, body type, response type, status, typed path params, handler, and error mapper data in human or JSON form
+
+Current `are audit` behavior:
+
+- run static checks and fail the audit report when diagnostics contain errors
+- build the checked HTTP contract manifest and require every route to declare response type and success status
+- read `[capabilities]` from `are.toml`
+- verify the server listen address is declared in `capabilities.network_listen`
+- warn on currently unused outbound network, filesystem, or environment capabilities
+- fail when process spawning is enabled, because it is outside the MVP backend capability set
 
 ## Diagnostic Shape
 

@@ -4,7 +4,7 @@ use are_lexer::lex_source;
 use are_parser::parse_tokens;
 use are_resolver::resolve_module;
 use are_typecheck::typecheck_module;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
@@ -32,13 +32,14 @@ impl CheckResult {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub package: PackageManifest,
     pub server: Option<ServerManifest>,
+    pub capabilities: Option<CapabilityManifest>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PackageManifest {
     pub name: String,
     pub version: String,
@@ -46,10 +47,26 @@ pub struct PackageManifest {
     pub entry: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerManifest {
     pub host: String,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CapabilityManifest {
+    #[serde(default)]
+    pub network_listen: Vec<String>,
+    #[serde(default)]
+    pub network_outbound: Vec<String>,
+    #[serde(default)]
+    pub filesystem_read: Vec<String>,
+    #[serde(default)]
+    pub filesystem_write: Vec<String>,
+    #[serde(default)]
+    pub env_read: Vec<String>,
+    #[serde(default)]
+    pub process_spawn: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -255,5 +272,8 @@ mod tests {
         assert_eq!(manifest.package.name, "users-api");
         assert_eq!(manifest.package.target, "server");
         assert_eq!(manifest.server.expect("server config").port, 8080);
+        let capabilities = manifest.capabilities.expect("capabilities");
+        assert_eq!(capabilities.network_listen, ["127.0.0.1:8080"]);
+        assert!(!capabilities.process_spawn);
     }
 }

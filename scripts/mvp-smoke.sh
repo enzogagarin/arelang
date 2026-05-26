@@ -122,6 +122,8 @@ run "$ROOT_DIR/are" check "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" check "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/users_api" --json
+run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json
+run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/users_api" --json
 run "$ROOT_DIR/are" test "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" test "$ROOT_DIR/examples/users_api" --json
 
@@ -131,6 +133,7 @@ run "$ROOT_DIR/are" new "$GENERATED" --name generated-api --port 18092
 run "$ROOT_DIR/are" fmt "$GENERATED" --check
 run "$ROOT_DIR/are" check "$GENERATED" --json
 run "$ROOT_DIR/are" inspect "$GENERATED" --json
+run "$ROOT_DIR/are" audit "$GENERATED" --json
 run "$ROOT_DIR/are" test "$GENERATED" --json
 start_server generated "$GENERATED"
 generated_log="$LAST_LOG_FILE"
@@ -144,6 +147,7 @@ run "$ROOT_DIR/are" new "$GENERATED_USERS" --name generated-users-api --template
 run "$ROOT_DIR/are" fmt "$GENERATED_USERS" --check
 run "$ROOT_DIR/are" check "$GENERATED_USERS" --json
 run "$ROOT_DIR/are" inspect "$GENERATED_USERS" --json
+run "$ROOT_DIR/are" audit "$GENERATED_USERS" --json
 run "$ROOT_DIR/are" test "$GENERATED_USERS" --json
 start_server generated_users "$GENERATED_USERS"
 generated_users_log="$LAST_LOG_FILE"

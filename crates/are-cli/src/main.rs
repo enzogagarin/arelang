@@ -1,3 +1,4 @@
+use are_audit::{AuditReport, AuditStatus, audit_project};
 use are_diagnostics::Diagnostic;
 use are_format::format_source;
 use are_http_runtime::{
@@ -93,6 +94,17 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Audit backend safety and capability manifest checks.
+    Audit {
+        /// Project directory to audit.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Emit machine-readable audit results.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -155,6 +167,7 @@ fn main() -> ExitCode {
         }
         Command::Test { path, json } => run_test(&path, json),
         Command::Inspect { path, json } => run_inspect(&path, json),
+        Command::Audit { path, json } => run_audit(&path, json),
     }
 }
 
@@ -186,6 +199,7 @@ fn create_project(
     println!("next:");
     println!("  ./are check {}", path.display());
     println!("  ./are inspect {}", path.display());
+    println!("  ./are audit {}", path.display());
     println!("  ./are test {}", path.display());
     println!("  ./are run {}", path.display());
     match template {
@@ -403,6 +417,61 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
             "  {:<6} {:<36} -> {}",
             route.method, contract, route.handler
         );
+    }
+}
+
+fn run_audit(path: &Path, json: bool) -> ExitCode {
+    let report = match audit_project(path) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(encoded) => println!("{encoded}"),
+            Err(err) => {
+                eprintln!("failed to encode audit JSON: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        print_audit_report(&report);
+    }
+
+    if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn print_audit_report(report: &AuditReport) {
+    println!(
+        "audited {} v{} ({})",
+        report.package, report.version, report.target
+    );
+    if let Some(http) = &report.http {
+        println!("http {} with {} route(s)", http.service, http.routes);
+    }
+    println!("checks:");
+    for check in &report.checks {
+        println!(
+            "  {:<4} {:<24} {}",
+            audit_status_label(check.status),
+            check.id,
+            check.message
+        );
+    }
+}
+
+fn audit_status_label(status: AuditStatus) -> &'static str {
+    match status {
+        AuditStatus::Pass => "pass",
+        AuditStatus::Warn => "warn",
+        AuditStatus::Fail => "fail",
     }
 }
 
@@ -654,9 +723,10 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        kebab_case, minimal_source, package_name_from_path, pascal_case, route_contract_label,
-        service_name_from_package, users_source,
+        audit_status_label, kebab_case, minimal_source, package_name_from_path, pascal_case,
+        route_contract_label, service_name_from_package, users_source,
     };
+    use are_audit::AuditStatus;
     use std::path::Path;
 
     #[test]
@@ -682,6 +752,13 @@ mod tests {
             route_contract_label("/users", Some("CreateUserInput"), Some("User"), Some(201)),
             "/users body CreateUserInput returns User status 201"
         );
+    }
+
+    #[test]
+    fn renders_audit_status_labels() {
+        assert_eq!(audit_status_label(AuditStatus::Pass), "pass");
+        assert_eq!(audit_status_label(AuditStatus::Warn), "warn");
+        assert_eq!(audit_status_label(AuditStatus::Fail), "fail");
     }
 
     #[test]

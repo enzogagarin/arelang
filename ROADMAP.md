@@ -147,17 +147,20 @@ Definition of done:
 
 ## Milestone 6: Safety And Production Shape
 
+Status: started.
+
 Output:
 
 - request scope model
 - first arena/region checker
-- capability manifest checks
-- audit command seed
+- capability manifest checks: started for HTTP MVP listen/process/default-closed capabilities
+- audit command seed: done
 - structured logging and metrics defaults
 
 Definition of done:
 
-- the compiler can catch at least one real backend safety class, such as storing request-scoped data in process state
+- the toolchain can catch at least one real backend safety class: started with undeclared HTTP listen capability and process-spawn capability checks
+- the compiler can catch at least one request-scope safety class, such as storing request-scoped data in process state
 
 ## Deferred Until After HTTP MVP
 

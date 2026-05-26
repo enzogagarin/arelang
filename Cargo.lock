@@ -61,9 +61,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "are-audit"
+version = "0.1.0"
+dependencies = [
+ "are-http-runtime",
+ "are-project",
+ "serde",
+]
+
+[[package]]
 name = "are-cli"
 version = "0.1.0"
 dependencies = [
+ "are-audit",
  "are-diagnostics",
  "are-format",
  "are-http-runtime",

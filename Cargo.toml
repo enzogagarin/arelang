@@ -12,6 +12,7 @@ members = [
     "crates/are-semantics",
     "crates/are-http-runtime",
     "crates/are-typecheck",
+    "crates/are-audit",
 ]
 resolver = "2"
 

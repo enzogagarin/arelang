@@ -1,24 +1,15 @@
 [package]
-name = "are-cli"
+name = "are-audit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "are"
-path = "src/main.rs"
-
 [dependencies]
-are-audit = { path = "../are-audit" }
 are-http-runtime = { path = "../are-http-runtime" }
 are-project = { path = "../are-project" }
-are-diagnostics = { path = "../are-diagnostics" }
-are-format = { path = "../are-format" }
-clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
 [lints]
 workspace = true

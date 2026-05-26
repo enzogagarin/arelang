@@ -25,6 +25,7 @@ Current implementation status:
 - route registry comes from parsed and typechecked Arelang service declarations
 - runtime preparation builds one checked HTTP contract manifest for service, routes, body types, response types, statuses, typed params, handlers, and the error mapper
 - `are inspect --json` exposes that checked HTTP contract manifest without starting the server
+- `are audit --json` checks route contracts and `[capabilities]` against the HTTP server surface
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, response contracts, and success status contracts
 - incoming requests and outgoing responses pass through explicit MVP runtime request/response types
 - route handlers execute through the MVP Arelang function-body interpreter
@@ -152,3 +153,19 @@ fn map_error(err: ApiError) -> Http.Response
 ```
 
 This is simpler than a magical framework mapper for v0 and easier for the compiler to support.
+
+## Capability Audit
+
+HTTP server projects declare the first MVP capability surface in `are.toml`:
+
+```toml
+[capabilities]
+network_listen = ["127.0.0.1:8080"]
+network_outbound = []
+filesystem_read = []
+filesystem_write = []
+env_read = []
+process_spawn = false
+```
+
+`are audit` verifies that the declared listen capability matches `[server]`, that route success contracts are explicit, and that unused network, filesystem, environment, and process capabilities stay closed by default.

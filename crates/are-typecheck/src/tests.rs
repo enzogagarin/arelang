@@ -622,11 +622,14 @@ fn rejects_invalid_builtin_named_argument_types() {
 #[test]
 fn checks_declarative_field_validation_rules() {
     let source = r"
-            type Email = opaque String
+            type Email = opaque String validate.email
+            type DisplayName = opaque String validate.length(min: 2, max: 80)
+            type BadId = opaque U64 validate.email
+            type BadTitle = opaque String validate.length(min: 10, max: 2)
 
             struct Good {
-                email: Email validate.email
-                name: String validate.length(min: 2, max: 80)
+                email: Email
+                name: DisplayName
             }
 
             struct Bad {
@@ -636,9 +639,11 @@ fn checks_declarative_field_validation_rules() {
         ";
 
     let diagnostics = diagnostics_for("test.are", source);
-    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    assert_eq!(diagnostics.len(), 4, "{diagnostics:#?}");
     assert_eq!(diagnostics[0].code, "E_TYPE_0010");
     assert_eq!(diagnostics[1].code, "E_TYPE_0011");
+    assert_eq!(diagnostics[2].code, "E_TYPE_0010");
+    assert_eq!(diagnostics[3].code, "E_TYPE_0011");
 }
 
 #[test]

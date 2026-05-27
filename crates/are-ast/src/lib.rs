@@ -30,6 +30,7 @@ pub struct TypeDecl {
     pub name: String,
     pub aliased: TypeExpr,
     pub opaque: bool,
+    pub validations: Vec<FieldValidation>,
     pub range: SourceRange,
 }
 

@@ -31,7 +31,7 @@ Current implementation status: complete for the HTTP MVP.
 - `are openapi` exports the checked HTTP contract manifest as OpenAPI 3.1 JSON with paths, request bodies, responses, typed path/query/header/cookie parameters, server URL, component schemas, file output, and drift checks
 - `are audit --json` checks route contracts and `[capabilities]` against the HTTP server surface
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, request query contracts, request headers contracts, request cookies contracts, response contracts, and success status contracts
-- struct field validation syntax supports `validate.email` and `validate.length(min: N, max: N)` on request contract structs
+- validation syntax supports `validate.email` and `validate.length(min: N, max: N)` on domain aliases and request contract structs
 - incoming requests and outgoing responses pass through explicit MVP runtime request/response types
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
@@ -110,7 +110,7 @@ The compiler should check:
 
 At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body/query/header/cookie validation, domain payload wrapping, success response validation, and tool-facing API schema export. The OpenAPI exporter consumes that same manifest, so documentation/client generation follows the exact route contracts the runtime uses. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
 
-Field validations are part of the same route contract surface. They are checked by the typechecker, enforced before typed body/query/header/cookie payloads reach handlers, included in `are inspect --json`, and lowered to OpenAPI schema constraints.
+Domain alias validations and field validations are part of the same route contract surface. They are checked by the typechecker, enforced before typed body/query/header/cookie/path payloads reach handlers, included in `are inspect --json`, and lowered to OpenAPI schema constraints.
 
 ## Response Helpers
 
@@ -155,23 +155,29 @@ Arrays can come after the first server works.
 
 ## Validation
 
-Validation can be declared next to the field shape when a rule is part of the API contract:
+Validation can be declared on domain aliases when the rule is part of the type's meaning. This is the preferred style for reusable backend contracts:
 
 ```are
+type Email = opaque String validate.email
+type DisplayName = opaque String validate.length(min: 2, max: 80)
+type AuthorizationHeader = opaque String validate.length(min: 7, max: 200)
+
 struct CreateUserInput {
-    email: Email validate.email
-    name: String validate.length(min: 2, max: 80)
+    email: Email
+    name: DisplayName
 }
 
 struct AuthHeaders {
-    authorization: String validate.length(min: 7, max: 200)
+    authorization: AuthorizationHeader
 }
 ```
 
+Validation can still be declared next to individual fields for one-off payload constraints.
+
 The first declarative rules are intentionally small:
 
-- `validate.email` accepts string-like fields (`String`, `Text`, or aliases to them) and requires an `@` at runtime.
-- `validate.length(min: N, max: N)` accepts string-like fields and checks character length inclusively.
+- `validate.email` accepts string-like aliases and fields (`String`, `Text`, or aliases to them) and requires an `@` at runtime.
+- `validate.length(min: N, max: N)` accepts string-like aliases and fields and checks character length inclusively.
 - `Option<T>` fields skip validation when the value is absent or `null`, and validate the inner value when present.
 
 Manual validation remains available inside functions for business rules that are not pure payload shape constraints:

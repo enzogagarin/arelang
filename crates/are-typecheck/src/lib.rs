@@ -62,7 +62,8 @@ impl<'a> TypeChecker<'a> {
     fn check_items(&mut self) {
         for item in &self.module.items {
             match item {
-                Item::Use(_) | Item::Type(_) | Item::Service(_) => {}
+                Item::Use(_) | Item::Service(_) => {}
+                Item::Type(decl) => self.check_type_decl(decl),
                 Item::Struct(decl) => self.check_struct(decl),
                 Item::Model(decl) => self.check_model(decl),
                 Item::Enum(decl) => self.check_enum(decl),
@@ -82,6 +83,10 @@ impl<'a> TypeChecker<'a> {
     fn check_struct(&mut self, decl: &StructDecl) {
         self.check_duplicate_fields(&decl.fields, DuplicateScope::StructField);
         self.check_field_validations(&decl.fields);
+    }
+
+    fn check_type_decl(&mut self, decl: &TypeDecl) {
+        self.check_type_validations(decl);
     }
 
     fn check_model(&mut self, decl: &ModelDecl) {

@@ -2,7 +2,8 @@ use are_audit::{AuditReport, AuditStatus, audit_project};
 use are_diagnostics::Diagnostic;
 use are_format::format_source;
 use are_http_runtime::{
-    HttpContractManifest, TestReport, inspect_project, openapi_project, run_project, test_project,
+    HttpContractManifest, HttpFieldValidationSchema, TestReport, inspect_project, openapi_project,
+    run_project, test_project,
 };
 use are_project::{check_path, project_root};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -538,7 +539,11 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
         println!("schemas:");
         for alias in &manifest.schemas.aliases {
             let opacity = if alias.opaque { "opaque " } else { "" };
-            println!("  type {} = {}{}", alias.name, opacity, alias.aliased_type);
+            let validations = validation_suffix(&alias.validations);
+            println!(
+                "  type {} = {}{}{}",
+                alias.name, opacity, alias.aliased_type, validations
+            );
         }
         for schema in &manifest.schemas.structs {
             println!(
@@ -598,6 +603,24 @@ fn brace_list(parts: impl IntoIterator<Item = String>) -> String {
     } else {
         format!("{{ {} }}", parts.join(", "))
     }
+}
+
+fn validation_suffix(validations: &[HttpFieldValidationSchema]) -> String {
+    let mut output = String::new();
+    for validation in validations {
+        output.push(' ');
+        match validation {
+            HttpFieldValidationSchema::Email => output.push_str("validate.email"),
+            HttpFieldValidationSchema::Length { min, max } => {
+                output.push_str("validate.length(min: ");
+                output.push_str(&min.to_string());
+                output.push_str(", max: ");
+                output.push_str(&max.to_string());
+                output.push(')');
+            }
+        }
+    }
+    output
 }
 
 fn has_schemas(manifest: &HttpContractManifest) -> bool {
@@ -791,14 +814,16 @@ fn users_source(service_name: &str) -> String {
 use std.validate
 
 type UserId = opaque U64
-type Email = opaque String
-type SessionId = opaque String
+type Email = opaque String validate.email
+type DisplayName = opaque String validate.length(min: 2, max: 80)
+type AuthorizationHeader = opaque String validate.length(min: 7, max: 200)
+type SessionId = opaque String validate.length(min: 6, max: 120)
 
 struct AppState {{}}
 
 struct CreateUserInput {{
-    email: Email validate.email
-    name: String validate.length(min: 2, max: 80)
+    email: Email
+    name: DisplayName
 }}
 
 struct HealthResponse {{
@@ -806,7 +831,7 @@ struct HealthResponse {{
 }}
 
 struct SearchUsersQuery {{
-    email: Email validate.email
+    email: Email
 }}
 
 struct SearchUsersResponse {{
@@ -814,7 +839,7 @@ struct SearchUsersResponse {{
 }}
 
 struct AuthHeaders {{
-    authorization: String validate.length(min: 7, max: 200)
+    authorization: AuthorizationHeader
 }}
 
 struct AuthCheckResponse {{
@@ -822,7 +847,7 @@ struct AuthCheckResponse {{
 }}
 
 struct SessionCookies {{
-    session_id: SessionId validate.length(min: 6, max: 120)
+    session_id: SessionId
 }}
 
 struct SessionResponse {{
@@ -833,7 +858,7 @@ struct SessionResponse {{
 model User {{
     id: UserId primary
     email: Email unique
-    name: String
+    name: DisplayName
 }}
 
 enum ApiError {{
@@ -1062,8 +1087,12 @@ mod tests {
         assert!(source.contains("fn current_session"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
-        assert!(source.contains("email: Email validate.email"));
-        assert!(source.contains("name: String validate.length(min: 2, max: 80)"));
+        assert!(source.contains("type Email = opaque String validate.email"));
+        assert!(
+            source.contains("type DisplayName = opaque String validate.length(min: 2, max: 80)")
+        );
+        assert!(source.contains("email: Email"));
+        assert!(source.contains("name: DisplayName"));
         assert!(!source.contains("fn validate_user"));
         assert!(source.contains(
             r#"post "/users" body CreateUserInput -> create_user returns User status 201"#

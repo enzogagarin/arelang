@@ -154,6 +154,10 @@ fn format_type_decl(output: &mut String, decl: &TypeDecl) {
         output.push_str("opaque ");
     }
     output.push_str(&format_type_expr(&decl.aliased));
+    for validation in &decl.validations {
+        output.push(' ');
+        output.push_str(&format_field_validation(validation));
+    }
     output.push('\n');
 }
 

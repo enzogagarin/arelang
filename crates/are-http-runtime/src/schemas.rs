@@ -70,7 +70,9 @@ impl RuntimeSchemas {
         invalid_code: &str,
     ) -> Result<(), String> {
         if let Some(alias) = self.aliases.get(type_name) {
-            return self.validate_type_expr_as(&alias.aliased, value, invalid_code);
+            self.validate_type_expr_as(&alias.aliased, value, invalid_code)?;
+            Self::validate_rules(&alias.validations, value, invalid_code)?;
+            return Ok(());
         }
 
         if let Some(decl) = self.structs.get(type_name) {
@@ -223,27 +225,31 @@ impl RuntimeSchemas {
             return Ok(serde_json::Value::String(value.to_string()));
         };
 
-        match self.primitive_root(type_name).as_deref() {
+        let decoded = match self.primitive_root(type_name).as_deref() {
             Some("U64") => value
                 .parse::<u64>()
                 .map(serde_json::Value::from)
-                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}")))?,
             Some("I64" | "Int") => value
                 .parse::<i64>()
                 .map(serde_json::Value::from)
-                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}")))?,
             Some("Bool") => value
                 .parse::<bool>()
                 .map(serde_json::Value::from)
-                .map_err(|_| api_invalid_input(&format!("invalid_{name}"))),
+                .map_err(|_| api_invalid_input(&format!("invalid_{name}")))?,
             Some("F64") => value
                 .parse::<f64>()
                 .ok()
                 .and_then(serde_json::Number::from_f64)
                 .map(serde_json::Value::Number)
-                .ok_or_else(|| api_invalid_input(&format!("invalid_{name}"))),
-            _ => Ok(serde_json::Value::String(value.to_string())),
-        }
+                .ok_or_else(|| api_invalid_input(&format!("invalid_{name}")))?,
+            _ => serde_json::Value::String(value.to_string()),
+        };
+
+        self.validate_value_as(type_name, &decoded, &format!("invalid_{name}"))
+            .map_err(|code| api_invalid_input(&code))?;
+        Ok(decoded)
     }
 
     pub(crate) fn type_expr_primitive_root(&self, ty: &TypeExpr) -> Option<String> {
@@ -310,7 +316,8 @@ impl RuntimeSchemas {
         for field in fields {
             match object.get(&field.name) {
                 Some(value) => {
-                    self.validate_type_expr_as(&field.ty, value, invalid_code)?;
+                    let invalid_field = invalid_field_code(&field.name);
+                    self.validate_type_expr_as(&field.ty, value, &invalid_field)?;
                     Self::validate_field_rules(field, value)?;
                 }
                 None if type_expr_is_optional(&field.ty) => {}
@@ -326,22 +333,30 @@ impl RuntimeSchemas {
             return Ok(());
         }
 
-        for validation in &field.validations {
+        Self::validate_rules(&field.validations, value, &invalid_field_code(&field.name))
+    }
+
+    fn validate_rules(
+        validations: &[FieldValidation],
+        value: &serde_json::Value,
+        invalid_code: &str,
+    ) -> Result<(), String> {
+        for validation in validations {
             match validation {
                 FieldValidation::Email { .. } => {
                     if !value.as_str().is_some_and(|email| email.contains('@')) {
-                        return Err(invalid_field_code(&field.name));
+                        return Err(invalid_code.to_string());
                     }
                 }
                 FieldValidation::Length { min, max, .. } => {
                     let Some(text) = value.as_str() else {
-                        return Err(invalid_field_code(&field.name));
+                        return Err(invalid_code.to_string());
                     };
                     let Ok(len) = i64::try_from(text.chars().count()) else {
-                        return Err(invalid_field_code(&field.name));
+                        return Err(invalid_code.to_string());
                     };
                     if !(*min..=*max).contains(&len) {
-                        return Err(invalid_field_code(&field.name));
+                        return Err(invalid_code.to_string());
                     }
                 }
             }

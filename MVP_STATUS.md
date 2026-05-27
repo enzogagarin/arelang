@@ -40,23 +40,24 @@ The smoke gate verifies:
 - `Result<T, E>` and `?` provide the MVP error flow
 - `Http.error_map` maps typed domain errors to HTTP responses
 - `model` declarations back the MVP in-memory `ctx.db.<collection>.insert/get` store
-- declarative field validations run at the HTTP boundary and are exported through `inspect` and OpenAPI
+- declarative alias and field validations run at the HTTP boundary and are exported through `inspect` and OpenAPI
 
 ## Representative MVP Syntax
 
 ```are
-type Email = opaque String
+type Email = opaque String validate.email
+type DisplayName = opaque String validate.length(min: 2, max: 80)
 type UserId = opaque U64
 
 struct CreateUserInput {
-    email: Email validate.email
-    name: String validate.length(min: 2, max: 80)
+    email: Email
+    name: DisplayName
 }
 
 model User collection users {
     id: UserId primary
     email: Email unique
-    name: String
+    name: DisplayName
 }
 
 fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {
@@ -80,7 +81,6 @@ These are intentionally outside the closed HTTP MVP:
 - full package/module system
 - real database adapters and migrations
 - richer collection/query APIs
-- reusable domain primitive validations on aliases
 - request-scope safety checking
 - full sandbox runtime
 - package registry

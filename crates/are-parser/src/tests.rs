@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 24);
+    assert_eq!(module.items.len(), 26);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -64,6 +64,9 @@ fn parses_users_api_shape() {
 #[test]
 fn parses_field_validation_rules() {
     let source = r"
+            type Email = opaque String validate.email
+            type DisplayName = opaque String validate.length(min: 2, max: 80)
+
             struct CreateUserInput {
                 email: Email validate.email
                 name: String validate.length(min: 2, max: 80)
@@ -77,7 +80,27 @@ fn parses_field_validation_rules() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    let Some(Item::Struct(input)) = module.items.first() else {
+    let Some(Item::Type(email)) = module.items.first() else {
+        panic!("expected Email type");
+    };
+    assert!(matches!(
+        email.validations.as_slice(),
+        [FieldValidation::Email { .. }]
+    ));
+
+    let Some(Item::Type(display_name)) = module.items.get(1) else {
+        panic!("expected DisplayName type");
+    };
+    assert!(matches!(
+        display_name.validations.as_slice(),
+        [FieldValidation::Length {
+            min: 2,
+            max: 80,
+            ..
+        }]
+    ));
+
+    let Some(Item::Struct(input)) = module.items.get(2) else {
         panic!("expected struct");
     };
 

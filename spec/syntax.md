@@ -60,12 +60,17 @@ Null is not part of the language.
 ## Structs
 
 ```are
+type Email = opaque String validate.email
+type DisplayName = opaque String validate.length(min: 2, max: 80)
+
 struct User {
     id: UserId
     email: Email
-    name: String
+    name: DisplayName
 }
 ```
+
+Domain aliases can carry validation contracts when a primitive has business meaning. Field-level validations remain available for one-off payload rules, but reusable concepts should be named as types.
 
 ## Enums
 

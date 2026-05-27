@@ -120,12 +120,21 @@ impl<'a> Parser<'a> {
         self.expect_kind(&TokenKind::Equals, "expected `=` after type name")?;
         let opaque = self.match_keyword(Keyword::Opaque).is_some();
         let aliased = self.parse_type_expr()?;
-        let end = aliased.range().end;
+        let mut validations = Vec::new();
+
+        while self.check_field_validation_start() {
+            validations.push(self.parse_field_validation()?);
+        }
+
+        let end = validations
+            .last()
+            .map_or_else(|| aliased.range().end, |validation| validation.range().end);
 
         Some(TypeDecl {
             name,
             aliased,
             opaque,
+            validations,
             range: SourceRange::new(start, end),
         })
     }

@@ -1,77 +1,106 @@
 use super::{TypeChecker, path_is};
-use are_ast::{Field, FieldValidation, TypeExpr};
+use are_ast::{Field, FieldValidation, TypeDecl, TypeExpr};
 use are_diagnostics::Diagnostic;
 use std::collections::HashSet;
 
 impl TypeChecker<'_> {
     pub(super) fn check_field_validations(&mut self, fields: &[Field]) {
         for field in fields {
-            let mut email_validation = None;
-            let mut length_validation = None;
+            self.check_validations(
+                &field.ty,
+                &field.validations,
+                "field",
+                &field.name,
+                &format!(
+                    "`{}` must be `String`, `Text`, or an alias to a string type",
+                    field.name
+                ),
+            );
+        }
+    }
 
-            for validation in &field.validations {
-                match validation {
-                    FieldValidation::Email { range } => {
-                        if let Some(previous) = email_validation.replace(*range) {
-                            self.duplicate(
-                                "E_TYPE_0012",
-                                *range,
-                                format!(
-                                    "duplicate field validation `validate.email` on `{}`",
-                                    field.name
-                                ),
-                                previous,
-                            );
-                        }
+    pub(super) fn check_type_validations(&mut self, decl: &TypeDecl) {
+        self.check_validations(
+            &decl.aliased,
+            &decl.validations,
+            "type",
+            &decl.name,
+            &format!(
+                "`{}` must alias `String`, `Text`, or another string-like type",
+                decl.name
+            ),
+        );
+    }
 
-                        if !self.is_string_like_type_expr(&field.ty) {
-                            self.diagnostics.push(Diagnostic::error(
-                                "E_TYPE_0010",
-                                &self.file,
-                                *range,
-                                "field validation `validate.email` expects a string-like field",
-                                format!(
-                                    "`{}` must be `String`, `Text`, or an alias to a string type",
-                                    field.name
-                                ),
-                            ));
-                        }
+    fn check_validations(
+        &mut self,
+        ty: &TypeExpr,
+        validations: &[FieldValidation],
+        target_kind: &str,
+        target_name: &str,
+        type_help: &str,
+    ) {
+        let mut email_validation = None;
+        let mut length_validation = None;
+
+        for validation in validations {
+            match validation {
+                FieldValidation::Email { range } => {
+                    if let Some(previous) = email_validation.replace(*range) {
+                        self.duplicate(
+                            "E_TYPE_0012",
+                            *range,
+                            format!(
+                                "duplicate {target_kind} validation `validate.email` on `{target_name}`"
+                            ),
+                            previous,
+                        );
                     }
-                    FieldValidation::Length { min, max, range } => {
-                        if let Some(previous) = length_validation.replace(*range) {
-                            self.duplicate(
-                                "E_TYPE_0012",
-                                *range,
-                                format!(
-                                    "duplicate field validation `validate.length` on `{}`",
-                                    field.name
-                                ),
-                                previous,
-                            );
-                        }
 
-                        if !self.is_string_like_type_expr(&field.ty) {
-                            self.diagnostics.push(Diagnostic::error(
-                                "E_TYPE_0010",
-                                &self.file,
-                                *range,
-                                "field validation `validate.length` expects a string-like field",
-                                format!(
-                                    "`{}` must be `String`, `Text`, or an alias to a string type",
-                                    field.name
-                                ),
-                            ));
-                        }
+                    if !self.is_string_like_type_expr(ty) {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_TYPE_0010",
+                            &self.file,
+                            *range,
+                            format!(
+                                "{target_kind} validation `validate.email` expects a string-like type"
+                            ),
+                            type_help.to_string(),
+                        ));
+                    }
+                }
+                FieldValidation::Length { min, max, range } => {
+                    if let Some(previous) = length_validation.replace(*range) {
+                        self.duplicate(
+                            "E_TYPE_0012",
+                            *range,
+                            format!(
+                                "duplicate {target_kind} validation `validate.length` on `{target_name}`"
+                            ),
+                            previous,
+                        );
+                    }
 
-                        if *min < 0 || *max < 0 || min > max {
-                            self.diagnostics.push(Diagnostic::error(
-                                "E_TYPE_0011",
-                                &self.file,
-                                *range,
-                                "invalid `validate.length` bounds",
-                                "`min` and `max` must be non-negative and `min` must be less than or equal to `max`",
-                            ));
-                        }
+                    if !self.is_string_like_type_expr(ty) {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_TYPE_0010",
+                            &self.file,
+                            *range,
+                            format!(
+                                "{target_kind} validation `validate.length` expects a string-like type"
+                            ),
+                            type_help.to_string(),
+                        ));
+                    }
+
+                    if *min < 0 || *max < 0 || min > max {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_TYPE_0011",
+                            &self.file,
+                            *range,
+                            "invalid `validate.length` bounds",
+                            "`min` and `max` must be non-negative and `min` must be less than or equal to `max`",
+                        ));
                     }
                 }
             }

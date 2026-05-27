@@ -50,6 +50,7 @@ pub struct HttpAliasSchema {
     pub name: String,
     pub aliased_type: String,
     pub opaque: bool,
+    pub validations: Vec<HttpFieldValidationSchema>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -350,6 +351,11 @@ fn alias_schema(decl: &TypeDecl) -> HttpAliasSchema {
         name: decl.name.clone(),
         aliased_type: type_expr_name(&decl.aliased),
         opaque: decl.opaque,
+        validations: decl
+            .validations
+            .iter()
+            .map(field_validation_schema)
+            .collect(),
     }
 }
 

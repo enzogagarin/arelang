@@ -205,6 +205,19 @@ fn handles_users_api_flow() {
     assert_eq!(invalid.status, 400);
     assert_eq!(invalid.body["error"], "invalid_email");
 
+    let invalid_name = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(
+            Method::Post,
+            "/users",
+            r#"{"email":"ada@example.com","name":"A"}"#,
+        ),
+    );
+    assert_eq!(invalid_name.status, 400);
+    assert_eq!(invalid_name.body["error"], "invalid_name");
+
     let fetched = runtime_response(
         &state,
         &contracts,
@@ -428,15 +441,15 @@ fn exports_users_api_openapi_document() {
         search_query_param["schema"]["$ref"],
         "#/components/schemas/Email"
     );
-    assert_eq!(search_query_param["schema"]["format"], "email");
 
     let auth_header_param = &document["paths"]["/users/auth-check"]["get"]["parameters"][0];
     assert_eq!(auth_header_param["name"], "authorization");
     assert_eq!(auth_header_param["in"], "header");
     assert_eq!(auth_header_param["required"], true);
-    assert_eq!(auth_header_param["schema"]["type"], "string");
-    assert_eq!(auth_header_param["schema"]["minLength"], 7);
-    assert_eq!(auth_header_param["schema"]["maxLength"], 200);
+    assert_eq!(
+        auth_header_param["schema"]["$ref"],
+        "#/components/schemas/AuthorizationHeader"
+    );
 
     let session_cookie_param = &document["paths"]["/session"]["get"]["parameters"][0];
     assert_eq!(session_cookie_param["name"], "session_id");
@@ -451,6 +464,18 @@ fn exports_users_api_openapi_document() {
     assert_eq!(user["x-are-collection"], "users");
     assert_eq!(user["properties"]["id"]["x-are-primary"], true);
     assert_eq!(user["properties"]["email"]["x-are-unique"], true);
+
+    let email = &document["components"]["schemas"]["Email"];
+    assert_eq!(email["type"], "string");
+    assert_eq!(email["format"], "email");
+
+    let display_name = &document["components"]["schemas"]["DisplayName"];
+    assert_eq!(display_name["minLength"], 2);
+    assert_eq!(display_name["maxLength"], 80);
+
+    let authorization_header = &document["components"]["schemas"]["AuthorizationHeader"];
+    assert_eq!(authorization_header["minLength"], 7);
+    assert_eq!(authorization_header["maxLength"], 200);
 
     let api_error = &document["components"]["schemas"]["ApiError"];
     assert_eq!(
@@ -497,6 +522,23 @@ fn assert_contract_schemas(contracts: &HttpContractManifest) {
     assert_eq!(user_id.aliased_type, "U64");
     assert!(user_id.opaque);
 
+    let email = contracts
+        .schemas
+        .aliases
+        .iter()
+        .find(|schema| schema.name == "Email")
+        .expect("Email alias schema");
+    assert_eq!(email.aliased_type, "String");
+    assert_eq!(email.validations.len(), 1);
+
+    let display_name = contracts
+        .schemas
+        .aliases
+        .iter()
+        .find(|schema| schema.name == "DisplayName")
+        .expect("DisplayName alias schema");
+    assert_eq!(display_name.validations.len(), 1);
+
     let input = contracts
         .schemas
         .structs
@@ -506,8 +548,9 @@ fn assert_contract_schemas(contracts: &HttpContractManifest) {
     assert_eq!(input.fields.len(), 2);
     assert_eq!(input.fields[0].name, "email");
     assert_eq!(input.fields[0].ty, "Email");
-    assert_eq!(input.fields[0].validations.len(), 1);
-    assert_eq!(input.fields[1].validations.len(), 1);
+    assert!(input.fields[0].validations.is_empty());
+    assert_eq!(input.fields[1].ty, "DisplayName");
+    assert!(input.fields[1].validations.is_empty());
 
     let user = contracts
         .schemas
@@ -519,6 +562,7 @@ fn assert_contract_schemas(contracts: &HttpContractManifest) {
     assert_eq!(user.fields.len(), 3);
     assert!(user.fields[0].primary);
     assert!(user.fields[1].unique);
+    assert_eq!(user.fields[2].ty, "DisplayName");
 
     let api_error = contracts
         .schemas

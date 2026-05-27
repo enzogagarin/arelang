@@ -2,14 +2,16 @@ use std.http as Http
 use std.validate
 
 type UserId = opaque U64
-type Email = opaque String
-type SessionId = opaque String
+type Email = opaque String validate.email
+type DisplayName = opaque String validate.length(min: 2, max: 80)
+type AuthorizationHeader = opaque String validate.length(min: 7, max: 200)
+type SessionId = opaque String validate.length(min: 6, max: 120)
 
 struct AppState {}
 
 struct CreateUserInput {
-    email: Email validate.email
-    name: String validate.length(min: 2, max: 80)
+    email: Email
+    name: DisplayName
 }
 
 struct HealthResponse {
@@ -17,7 +19,7 @@ struct HealthResponse {
 }
 
 struct SearchUsersQuery {
-    email: Email validate.email
+    email: Email
 }
 
 struct SearchUsersResponse {
@@ -25,7 +27,7 @@ struct SearchUsersResponse {
 }
 
 struct AuthHeaders {
-    authorization: String validate.length(min: 7, max: 200)
+    authorization: AuthorizationHeader
 }
 
 struct AuthCheckResponse {
@@ -33,7 +35,7 @@ struct AuthCheckResponse {
 }
 
 struct SessionCookies {
-    session_id: SessionId validate.length(min: 6, max: 120)
+    session_id: SessionId
 }
 
 struct SessionResponse {
@@ -44,7 +46,7 @@ struct SessionResponse {
 model User {
     id: UserId primary
     email: Email unique
-    name: String
+    name: DisplayName
 }
 
 enum ApiError {

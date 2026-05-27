@@ -25,8 +25,8 @@ use tiny_http::Server;
 
 pub use contracts::{
     HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpEnumVariantSchema, HttpFieldSchema,
-    HttpModelFieldSchema, HttpModelSchema, HttpPathParam, HttpRouteContract, HttpSchemaManifest,
-    HttpStructSchema, TestPathParam, TestRoute,
+    HttpFieldValidationSchema, HttpModelFieldSchema, HttpModelSchema, HttpPathParam,
+    HttpRouteContract, HttpSchemaManifest, HttpStructSchema, TestPathParam, TestRoute,
 };
 
 use are_project::{CheckResult, Manifest, ProjectError, check_path, load_manifest, project_root};

@@ -224,6 +224,7 @@ fn component_schemas(schemas: &HttpSchemaManifest) -> Value {
 
 fn alias_component(alias: &HttpAliasSchema) -> Value {
     let mut schema = type_schema(&alias.aliased_type);
+    apply_field_validations(&mut schema, &alias.validations);
     insert_extension(&mut schema, "x-are-opaque", Value::Bool(alias.opaque));
     schema
 }

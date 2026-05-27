@@ -8,6 +8,7 @@ use std::path::{Path as FsPath, PathBuf};
 
 mod body;
 mod http;
+mod validation;
 
 #[cfg(test)]
 mod tests;
@@ -80,6 +81,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_struct(&mut self, decl: &StructDecl) {
         self.check_duplicate_fields(&decl.fields, DuplicateScope::StructField);
+        self.check_field_validations(&decl.fields);
     }
 
     fn check_model(&mut self, decl: &ModelDecl) {

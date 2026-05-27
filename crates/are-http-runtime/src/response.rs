@@ -35,11 +35,11 @@ pub(crate) fn runtime_response(
     };
 
     if let Some(body_type) = &route.body_type
-        && !functions
+        && let Err(code) = functions
             .schemas
             .validate_json_body(body_type, &request.body)
     {
-        return error_response(400, "invalid_json");
+        return error_response(400, &code);
     }
 
     let response = interpreted_response(

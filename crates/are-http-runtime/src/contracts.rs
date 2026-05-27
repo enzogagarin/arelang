@@ -1,7 +1,7 @@
 use crate::{RuntimeError, schemas::type_expr_is_optional};
 use are_ast::{
-    EnumDecl, Field, Item, ModelDecl, ModelField, ModelFieldAttr, Module, RouteDecl, ServiceDecl,
-    StructDecl, TypeDecl, TypeExpr,
+    EnumDecl, Field, FieldValidation, Item, ModelDecl, ModelField, ModelFieldAttr, Module,
+    RouteDecl, ServiceDecl, StructDecl, TypeDecl, TypeExpr,
 };
 use are_project::CheckedFile;
 use are_semantics::collection_name_for_model;
@@ -70,6 +70,14 @@ pub struct HttpFieldSchema {
     pub name: String,
     pub ty: String,
     pub optional: bool,
+    pub validations: Vec<HttpFieldValidationSchema>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HttpFieldValidationSchema {
+    Email,
+    Length { min: i64, max: i64 },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -379,6 +387,21 @@ fn field_schema(field: &Field) -> HttpFieldSchema {
         name: field.name.clone(),
         ty: type_expr_name(&field.ty),
         optional: type_expr_is_optional(&field.ty),
+        validations: field
+            .validations
+            .iter()
+            .map(field_validation_schema)
+            .collect(),
+    }
+}
+
+fn field_validation_schema(validation: &FieldValidation) -> HttpFieldValidationSchema {
+    match validation {
+        FieldValidation::Email { .. } => HttpFieldValidationSchema::Email,
+        FieldValidation::Length { min, max, .. } => HttpFieldValidationSchema::Length {
+            min: *min,
+            max: *max,
+        },
     }
 }
 

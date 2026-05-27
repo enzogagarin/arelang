@@ -640,18 +640,40 @@ mod tests {
     }
 
     #[test]
-    fn propagates_create_user_validation_errors() {
-        let mut host = TestHost::new(r#"{"email":"invalid","name":"Ada"}"#);
+    fn interprets_manual_validation_builtins() {
+        let functions = functions_from_source(
+            "validation.are",
+            r#"
+                use std.validate
 
-        let err = interpret_users_api_function("create_user", &mut host).expect_err("email fails");
-        let error = err.as_raised_error().expect("validation raises ApiError");
-        let response = map_users_api_error(error.clone(), &mut host);
+                fn valid_email() -> Bool {
+                    return validate.email("ada@example.com")
+                }
 
-        assert_eq!(response.status, 400);
-        assert_eq!(
-            response.body,
-            serde_json::json!({ "error": "invalid_email" })
+                fn valid_length() -> Bool {
+                    return validate.length("Ada", min: 2, max: 80)
+                }
+            "#,
         );
+        let mut host = TestHost::new("");
+
+        let email = interpret_function_with_host_and_args(
+            functions.get("valid_email").expect("function exists"),
+            &functions,
+            &mut host,
+            Vec::new(),
+        )
+        .expect("email validation runs");
+        let length = interpret_function_with_host_and_args(
+            functions.get("valid_length").expect("function exists"),
+            &functions,
+            &mut host,
+            Vec::new(),
+        )
+        .expect("length validation runs");
+
+        assert_eq!(email, Value::Bool(true));
+        assert_eq!(length, Value::Bool(true));
     }
 
     #[test]
@@ -708,7 +730,11 @@ mod tests {
 
     fn users_api_functions() -> HashMap<String, FunctionDecl> {
         let source = include_str!("../../../examples/users_api/main.are");
-        let file = Path::new("examples/users_api/main.are");
+        functions_from_source("examples/users_api/main.are", source)
+    }
+
+    fn functions_from_source(file_name: &str, source: &str) -> HashMap<String, FunctionDecl> {
+        let file = Path::new(file_name);
         let (tokens, lex_diagnostics) = lex_source(file, source);
         assert!(lex_diagnostics.is_empty(), "{lex_diagnostics:#?}");
         let (module, parse_diagnostics) = parse_tokens(file, &tokens);

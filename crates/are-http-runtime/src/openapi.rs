@@ -1,6 +1,7 @@
 use crate::contracts::{
-    HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpFieldSchema, HttpModelFieldSchema,
-    HttpModelSchema, HttpRouteContract, HttpSchemaManifest, HttpStructSchema,
+    HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpFieldSchema,
+    HttpFieldValidationSchema, HttpModelFieldSchema, HttpModelSchema, HttpRouteContract,
+    HttpSchemaManifest, HttpStructSchema,
 };
 use crate::schemas::{cookie_name_for_field, header_name_for_field};
 use are_project::Manifest;
@@ -127,7 +128,15 @@ fn field_parameters(type_name: &str, schemas: &HttpSchemaManifest, location: &st
         return schema
             .fields
             .iter()
-            .map(|field| field_parameter(&field.name, &field.ty, !field.optional, location))
+            .map(|field| {
+                field_parameter(
+                    &field.name,
+                    &field.ty,
+                    !field.optional,
+                    location,
+                    &field.validations,
+                )
+            })
             .collect();
     }
 
@@ -139,14 +148,20 @@ fn field_parameters(type_name: &str, schemas: &HttpSchemaManifest, location: &st
         return schema
             .fields
             .iter()
-            .map(|field| field_parameter(&field.name, &field.ty, !field.optional, location))
+            .map(|field| field_parameter(&field.name, &field.ty, !field.optional, location, &[]))
             .collect();
     }
 
     Vec::new()
 }
 
-fn field_parameter(name: &str, ty: &str, required: bool, location: &str) -> Value {
+fn field_parameter(
+    name: &str,
+    ty: &str,
+    required: bool,
+    location: &str,
+    validations: &[HttpFieldValidationSchema],
+) -> Value {
     let name = if location == "header" {
         header_name_for_field(name)
     } else if location == "cookie" {
@@ -155,11 +170,14 @@ fn field_parameter(name: &str, ty: &str, required: bool, location: &str) -> Valu
         name.to_string()
     };
 
+    let mut schema = type_schema(ty);
+    apply_field_validations(&mut schema, validations);
+
     json!({
         "name": name,
         "in": location,
         "required": required,
-        "schema": type_schema(ty),
+        "schema": schema,
     })
 }
 
@@ -258,6 +276,7 @@ fn object_component<'a>(fields: impl IntoIterator<Item = FieldLike<'a>>) -> Valu
         if let Some(value) = field.const_value() {
             insert_extension(&mut schema, "const", Value::String(value.to_string()));
         }
+        apply_field_validations(&mut schema, field.validations());
         properties.insert(name, schema);
     }
 
@@ -304,6 +323,20 @@ fn type_schema(type_name: &str) -> Value {
 
 fn string_schema() -> Value {
     json!({ "type": "string" })
+}
+
+fn apply_field_validations(schema: &mut Value, validations: &[HttpFieldValidationSchema]) {
+    for validation in validations {
+        match validation {
+            HttpFieldValidationSchema::Email => {
+                insert_extension(schema, "format", Value::String("email".to_string()));
+            }
+            HttpFieldValidationSchema::Length { min, max } => {
+                insert_extension(schema, "minLength", Value::from(*min));
+                insert_extension(schema, "maxLength", Value::from(*max));
+            }
+        }
+    }
 }
 
 fn optional_inner(type_name: &str) -> Option<&str> {
@@ -414,6 +447,13 @@ impl FieldLike<'_> {
         match self {
             Self::Synthetic { value, .. } => Some(value),
             Self::Struct(_) | Self::Model(_) => None,
+        }
+    }
+
+    fn validations(&self) -> &[HttpFieldValidationSchema] {
+        match self {
+            Self::Struct(field) => &field.validations,
+            Self::Model(_) | Self::Synthetic { .. } => &[],
         }
     }
 }

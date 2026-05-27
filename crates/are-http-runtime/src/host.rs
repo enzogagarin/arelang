@@ -22,9 +22,9 @@ impl Host for RuntimeHost<'_> {
             .map_err(|_| api_invalid_input("invalid_json"))?;
 
         if let Some(type_name) = type_name
-            && !self.schemas.validate_value(type_name, &value)
+            && let Err(code) = self.schemas.validate_json_value(type_name, &value)
         {
-            return Err(api_invalid_input("invalid_json"));
+            return Err(api_invalid_input(&code));
         }
 
         Ok(value)

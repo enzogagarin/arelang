@@ -234,6 +234,15 @@ fn rejects_missing_users_api_query_params() {
 
     assert_eq!(missing.status, 400);
     assert_eq!(missing.body["error"], "missing_email");
+
+    let invalid = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/search?email=invalid", ""),
+    );
+    assert_eq!(invalid.status, 400);
+    assert_eq!(invalid.body["error"], "invalid_email");
 }
 
 #[test]
@@ -255,6 +264,15 @@ fn handles_users_api_header_contracts() {
     );
     assert_eq!(authorized.status, 200);
     assert_eq!(authorized.body["authorized"], true);
+
+    let invalid = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/auth-check", "").with_header("authorization", "Bearer"),
+    );
+    assert_eq!(invalid.status, 400);
+    assert_eq!(invalid.body["error"], "invalid_authorization");
 
     let missing = runtime_response(
         &state,
@@ -286,6 +304,15 @@ fn handles_users_api_cookie_contracts() {
     assert_eq!(active.status, 200);
     assert_eq!(active.body["session_id"], "session+dev-123");
     assert_eq!(active.body["active"], true);
+
+    let invalid = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/session", "").with_header("Cookie", "session_id=no"),
+    );
+    assert_eq!(invalid.status, 400);
+    assert_eq!(invalid.body["error"], "invalid_session_id");
 
     let missing = runtime_response(
         &state,
@@ -401,12 +428,15 @@ fn exports_users_api_openapi_document() {
         search_query_param["schema"]["$ref"],
         "#/components/schemas/Email"
     );
+    assert_eq!(search_query_param["schema"]["format"], "email");
 
     let auth_header_param = &document["paths"]["/users/auth-check"]["get"]["parameters"][0];
     assert_eq!(auth_header_param["name"], "authorization");
     assert_eq!(auth_header_param["in"], "header");
     assert_eq!(auth_header_param["required"], true);
     assert_eq!(auth_header_param["schema"]["type"], "string");
+    assert_eq!(auth_header_param["schema"]["minLength"], 7);
+    assert_eq!(auth_header_param["schema"]["maxLength"], 200);
 
     let session_cookie_param = &document["paths"]["/session"]["get"]["parameters"][0];
     assert_eq!(session_cookie_param["name"], "session_id");
@@ -475,7 +505,9 @@ fn assert_contract_schemas(contracts: &HttpContractManifest) {
         .expect("CreateUserInput struct schema");
     assert_eq!(input.fields.len(), 2);
     assert_eq!(input.fields[0].name, "email");
-    assert_eq!(input.fields[0].ty, "String");
+    assert_eq!(input.fields[0].ty, "Email");
+    assert_eq!(input.fields[0].validations.len(), 1);
+    assert_eq!(input.fields[1].validations.len(), 1);
 
     let user = contracts
         .schemas

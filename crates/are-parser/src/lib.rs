@@ -1,7 +1,8 @@
 use are_ast::{
-    Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FunctionBody, FunctionDecl, Item,
-    ModelDecl, ModelField, ModelFieldAttr, Module, ObjectField, Param, Path, Pattern, RawBlock,
-    RouteDecl, RouteStatus, ServiceDecl, ServiceUse, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
+    Block, CallArg, EnumDecl, EnumVariant, Expr, Field, FieldValidation, FunctionBody,
+    FunctionDecl, Item, ModelDecl, ModelField, ModelFieldAttr, Module, ObjectField, Param, Path,
+    Pattern, RawBlock, RouteDecl, RouteStatus, ServiceDecl, ServiceUse, Stmt, StructDecl, TypeDecl,
+    TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, Position, SourceRange};
 use are_lexer::{Keyword, Token, TokenKind};
@@ -136,7 +137,7 @@ impl<'a> Parser<'a> {
 
         let mut fields = Vec::new();
         while !self.at_eof() && !self.check_kind(&TokenKind::RightBrace) {
-            fields.push(self.parse_field()?);
+            fields.push(self.parse_field(true)?);
         }
 
         let end = self
@@ -237,7 +238,7 @@ impl<'a> Parser<'a> {
         if self.match_kind(&TokenKind::LeftParen).is_some() {
             if !self.check_kind(&TokenKind::RightParen) {
                 loop {
-                    payload.push(self.parse_field()?);
+                    payload.push(self.parse_field(false)?);
                     if self.match_kind(&TokenKind::Comma).is_none() {
                         break;
                     }
@@ -472,18 +473,132 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_field(&mut self) -> Option<Field> {
+    fn parse_field(&mut self, allow_validations: bool) -> Option<Field> {
         let start = self.peek().range.start;
         let name = self.expect_identifier("expected field name")?;
         self.expect_kind(&TokenKind::Colon, "expected `:` after field name")?;
         let ty = self.parse_type_expr()?;
-        let end = ty.range().end;
+        let mut validations = Vec::new();
+
+        if allow_validations {
+            while self.check_field_validation_start() {
+                validations.push(self.parse_field_validation()?);
+            }
+        }
+
+        let end = validations
+            .last()
+            .map_or_else(|| ty.range().end, |validation| validation.range().end);
 
         Some(Field {
             name,
             ty,
+            validations,
             range: SourceRange::new(start, end),
         })
+    }
+
+    fn check_field_validation_start(&self) -> bool {
+        self.check_identifier("validate") && self.check_next_kind(&TokenKind::Dot)
+    }
+
+    fn parse_field_validation(&mut self) -> Option<FieldValidation> {
+        let start = self.peek().range.start;
+        self.expect_identifier("expected field validation namespace")?;
+        self.expect_kind(&TokenKind::Dot, "expected `.` after validation namespace")?;
+        let name = self.expect_identifier("expected field validation name")?;
+
+        match name.as_str() {
+            "email" => {
+                let end = self.previous_range()?.end;
+                Some(FieldValidation::Email {
+                    range: SourceRange::new(start, end),
+                })
+            }
+            "length" => self.parse_length_validation(start),
+            _ => {
+                let range = self.previous_range()?;
+                self.diagnostics.push(Diagnostic::error(
+                    "E_PARSE_0011",
+                    &self.file,
+                    range,
+                    format!("unknown field validation `validate.{name}`"),
+                    "supported field validations are `validate.email` and `validate.length(min: N, max: N)`",
+                ));
+                None
+            }
+        }
+    }
+
+    fn parse_length_validation(&mut self, start: Position) -> Option<FieldValidation> {
+        self.expect_kind(
+            &TokenKind::LeftParen,
+            "expected `(` after `validate.length`",
+        )?;
+        let mut min = None;
+        let mut max = None;
+
+        if !self.check_kind(&TokenKind::RightParen) {
+            loop {
+                let label_range = self.peek().range;
+                let label = self.expect_identifier("expected validation argument label")?;
+                self.expect_kind(&TokenKind::Colon, "expected `:` after validation argument")?;
+                let value_token =
+                    self.expect_kind(&TokenKind::Integer, "expected integer validation argument")?;
+                let value = value_token.lexeme.parse::<i64>().unwrap_or(0);
+
+                match label.as_str() {
+                    "min" if min.is_none() => min = Some(value),
+                    "max" if max.is_none() => max = Some(value),
+                    "min" | "max" => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_PARSE_0011",
+                            &self.file,
+                            SourceRange::new(label_range.start, value_token.range.end),
+                            format!("duplicate validation argument `{label}`"),
+                            "`validate.length` accepts each of `min` and `max` once",
+                        ));
+                        return None;
+                    }
+                    _ => {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_PARSE_0011",
+                            &self.file,
+                            label_range,
+                            format!("unknown validation argument `{label}`"),
+                            "`validate.length` accepts `min` and `max` integer arguments",
+                        ));
+                        return None;
+                    }
+                }
+
+                if self.match_kind(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+
+        let end = self
+            .expect_kind(
+                &TokenKind::RightParen,
+                "expected `)` after validation arguments",
+            )?
+            .range
+            .end;
+        let range = SourceRange::new(start, end);
+
+        let (Some(min), Some(max)) = (min, max) else {
+            self.diagnostics.push(Diagnostic::error(
+                "E_PARSE_0011",
+                &self.file,
+                range,
+                "missing validation argument",
+                "`validate.length` requires both `min` and `max` integer arguments",
+            ));
+            return None;
+        };
+
+        Some(FieldValidation::Length { min, max, range })
     }
 
     fn parse_param_list(&mut self) -> Option<Vec<Param>> {

@@ -31,6 +31,7 @@ Current implementation status:
 - `are openapi` exports the checked HTTP contract manifest as OpenAPI 3.1 JSON with paths, request bodies, responses, typed path/query/header/cookie parameters, server URL, component schemas, file output, and drift checks
 - `are audit --json` checks route contracts and `[capabilities]` against the HTTP server surface
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, request query contracts, request headers contracts, request cookies contracts, response contracts, and success status contracts
+- struct field validation syntax supports `validate.email` and `validate.length(min: N, max: N)` on request contract structs
 - incoming requests and outgoing responses pass through explicit MVP runtime request/response types
 - route handlers execute through the MVP Arelang function-body interpreter
 - `are new --template users` creates a runnable backend-first users API project
@@ -109,6 +110,8 @@ The compiler should check:
 
 At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body/query/header/cookie validation, domain payload wrapping, success response validation, and tool-facing API schema export. The OpenAPI exporter consumes that same manifest, so documentation/client generation follows the exact route contracts the runtime uses. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
 
+Field validations are part of the same route contract surface. They are checked by the typechecker, enforced before typed body/query/header/cookie payloads reach handlers, included in `are inspect --json`, and lowered to OpenAPI schema constraints.
+
 ## Response Helpers
 
 The v0 HTTP module should expose:
@@ -152,17 +155,29 @@ Arrays can come after the first server works.
 
 ## Validation
 
-Validation should be present in the users API, but it may be implemented as simple standard library functions before attributes exist.
+Validation can be declared next to the field shape when a rule is part of the API contract:
 
 ```are
-validate.email(input.email)?
-validate.length(input.name, min: 2, max: 80)?
+struct CreateUserInput {
+    email: Email validate.email
+    name: String validate.length(min: 2, max: 80)
+}
+
+struct AuthHeaders {
+    authorization: String validate.length(min: 7, max: 200)
+}
 ```
 
-Attribute validation can come later:
+The first declarative rules are intentionally small:
+
+- `validate.email` accepts string-like fields (`String`, `Text`, or aliases to them) and requires an `@` at runtime.
+- `validate.length(min: N, max: N)` accepts string-like fields and checks character length inclusively.
+- `Option<T>` fields skip validation when the value is absent or `null`, and validate the inner value when present.
+
+Manual validation remains available inside functions for business rules that are not pure payload shape constraints:
 
 ```are
-email: Email @validate.email
+ensure validate.length(input.name, min: 2, max: 80), ApiError.InvalidInput("invalid_name")
 ```
 
 ## Error Mapping

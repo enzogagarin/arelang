@@ -620,6 +620,28 @@ fn rejects_invalid_builtin_named_argument_types() {
 }
 
 #[test]
+fn checks_declarative_field_validation_rules() {
+    let source = r"
+            type Email = opaque String
+
+            struct Good {
+                email: Email validate.email
+                name: String validate.length(min: 2, max: 80)
+            }
+
+            struct Bad {
+                id: U64 validate.email
+                title: String validate.length(min: 10, max: 2)
+            }
+        ";
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_TYPE_0010");
+    assert_eq!(diagnostics[1].code, "E_TYPE_0011");
+}
+
+#[test]
 fn rejects_invalid_local_function_argument_types() {
     let source = r#"
             struct CreateUserInput { name: String }

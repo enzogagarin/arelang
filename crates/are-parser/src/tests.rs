@@ -1,5 +1,5 @@
 use super::parse_tokens;
-use are_ast::{Expr, FunctionBody, FunctionDecl, Item, Module, Stmt};
+use are_ast::{Expr, FieldValidation, FunctionBody, FunctionDecl, Item, Module, Stmt};
 use are_lexer::lex_source;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 25);
+    assert_eq!(module.items.len(), 24);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -35,21 +35,11 @@ fn parses_users_api_shape() {
     };
     assert!(matches!(value, Expr::Object { .. }));
 
-    let validate_user = function_named(&module, "validate_user");
-    let FunctionBody::Parsed { block } = &validate_user.body else {
-        panic!("validate_user body should parse into statements");
-    };
-    assert_eq!(block.statements.len(), 3);
-    assert!(matches!(
-        block.statements.first(),
-        Some(Stmt::Ensure { .. })
-    ));
-
     let create_user = function_named(&module, "create_user");
     let FunctionBody::Parsed { block } = &create_user.body else {
         panic!("create_user body should parse into statements");
     };
-    assert_eq!(block.statements.len(), 3);
+    assert_eq!(block.statements.len(), 2);
     assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
     assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 
@@ -68,6 +58,40 @@ fn parses_users_api_shape() {
     assert!(matches!(
         block.statements.first(),
         Some(Stmt::Match { arms, .. }) if arms.len() == 3
+    ));
+}
+
+#[test]
+fn parses_field_validation_rules() {
+    let source = r"
+            struct CreateUserInput {
+                email: Email validate.email
+                name: String validate.length(min: 2, max: 80)
+            }
+        ";
+    let file = Path::new("test.are");
+    let (tokens, lex_diagnostics) = lex_source(file, source);
+    assert!(lex_diagnostics.is_empty());
+
+    let (module, diagnostics) = parse_tokens(file, &tokens);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+    let module = module.expect("module parses");
+    let Some(Item::Struct(input)) = module.items.first() else {
+        panic!("expected struct");
+    };
+
+    assert!(matches!(
+        input.fields[0].validations.as_slice(),
+        [FieldValidation::Email { .. }]
+    ));
+    assert!(matches!(
+        input.fields[1].validations.as_slice(),
+        [FieldValidation::Length {
+            min: 2,
+            max: 80,
+            ..
+        }]
     ));
 }
 

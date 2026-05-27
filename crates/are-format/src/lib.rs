@@ -1,7 +1,7 @@
 use are_ast::{
-    Block, CallArg, EnumDecl, Expr, Field, FunctionBody, FunctionDecl, Item, MatchArm, ModelDecl,
-    ModelField, ModelFieldAttr, Module, ObjectField, Param, Path, Pattern, ServiceDecl, Stmt,
-    StructDecl, TypeDecl, TypeExpr, UseDecl,
+    Block, CallArg, EnumDecl, Expr, Field, FieldValidation, FunctionBody, FunctionDecl, Item,
+    MatchArm, ModelDecl, ModelField, ModelFieldAttr, Module, ObjectField, Param, Path, Pattern,
+    ServiceDecl, Stmt, StructDecl, TypeDecl, TypeExpr, UseDecl,
 };
 use are_diagnostics::{Diagnostic, Position, SourceRange};
 use are_lexer::lex_source;
@@ -500,7 +500,21 @@ fn format_type_expr(ty: &TypeExpr) -> String {
 }
 
 fn format_field_inline(field: &Field) -> String {
-    format!("{}: {}", field.name, format_type_expr(&field.ty))
+    let mut output = format!("{}: {}", field.name, format_type_expr(&field.ty));
+    for validation in &field.validations {
+        output.push(' ');
+        output.push_str(&format_field_validation(validation));
+    }
+    output
+}
+
+fn format_field_validation(validation: &FieldValidation) -> String {
+    match validation {
+        FieldValidation::Email { .. } => "validate.email".to_string(),
+        FieldValidation::Length { min, max, .. } => {
+            format!("validate.length(min: {min}, max: {max})")
+        }
+    }
 }
 
 fn format_param(param: &Param) -> String {

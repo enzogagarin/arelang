@@ -70,6 +70,7 @@ Output:
 - route headers contract checks: done
 - route cookies contract checks: done
 - route contract handler parameter binding: done
+- declarative struct field validation checks for `validate.email` and `validate.length`: done
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
 - model database call checks for `ctx.db.<collection>.insert/get`: started
@@ -116,6 +117,7 @@ Output:
 - route cookies contracts: done for `cookies Payload`
 - route contract parameter binding: done for body, query, headers, cookies, and typed path params
 - route response contracts: done for `returns Payload status N`
+- declarative request payload validation: done for body, query, headers, and cookies
 - domain payload handlers: done for `Payload` and `Result<Payload, E>`
 - API error mapping: done through `Http.error_map`
 
@@ -142,7 +144,8 @@ Output:
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
 - `are inspect` schema export: done for aliases, structs, models, enum variants, model collections, and primary/unique field metadata
-- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path/query/header/cookie params, servers, component schemas, file output, and drift checks
+- `are inspect` field validation export: done for struct field validation metadata
+- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path/query/header/cookie params, field validation constraints, servers, component schemas, file output, and drift checks
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done

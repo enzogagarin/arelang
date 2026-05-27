@@ -44,7 +44,30 @@ pub struct StructDecl {
 pub struct Field {
     pub name: String,
     pub ty: TypeExpr,
+    pub validations: Vec<FieldValidation>,
     pub range: SourceRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FieldValidation {
+    Email {
+        range: SourceRange,
+    },
+    Length {
+        min: i64,
+        max: i64,
+        range: SourceRange,
+    },
+}
+
+impl FieldValidation {
+    #[must_use]
+    pub const fn range(&self) -> SourceRange {
+        match self {
+            Self::Email { range } | Self::Length { range, .. } => *range,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

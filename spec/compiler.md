@@ -115,7 +115,7 @@ Current `are inspect` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - build the checked HTTP contract manifest without opening a TCP listener
-- emit service, routes, body type, query type, headers type, cookies type, response type, status, typed path params, handler, local schema, and error mapper data in human or JSON form
+- emit service, routes, body type, query type, headers type, cookies type, response type, status, typed path params, handler, local schema, field validation, and error mapper data in human or JSON form
 
 Current `are openapi` behavior:
 
@@ -124,6 +124,7 @@ Current `are openapi` behavior:
 - map checked service routes to `paths`
 - map route body and response contracts to JSON request and response schemas
 - map typed path params plus typed query/header/cookie contracts to OpenAPI parameters
+- map field validations to JSON Schema/OpenAPI constraints such as `format`, `minLength`, and `maxLength`
 - map aliases, structs, models, and enums to `components.schemas`
 - preserve Arelang-specific model metadata through `x-are-*` extensions
 - write the generated document with `--output`

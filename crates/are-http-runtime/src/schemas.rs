@@ -1,5 +1,7 @@
 use crate::errors::api_invalid_input;
-use are_ast::{Field, Item, ModelDecl, ModelField, StructDecl, TypeDecl, TypeExpr};
+use are_ast::{
+    Field, FieldValidation, Item, ModelDecl, ModelField, StructDecl, TypeDecl, TypeExpr,
+};
 use are_interpreter::InterpretError;
 use are_project::CheckedFile;
 use are_semantics::collection_name_for_model;
@@ -34,12 +36,20 @@ impl RuntimeSchemas {
         schemas
     }
 
-    pub(crate) fn validate_json_body(&self, type_name: &str, body: &str) -> bool {
+    pub(crate) fn validate_json_body(&self, type_name: &str, body: &str) -> Result<(), String> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-            return false;
+            return Err("invalid_json".to_string());
         };
 
-        self.validate_value(type_name, &value)
+        self.validate_json_value(type_name, &value)
+    }
+
+    pub(crate) fn validate_json_value(
+        &self,
+        type_name: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.validate_value_as(type_name, value, "invalid_json")
     }
 
     pub(crate) fn model_for_collection(&self, collection: &str) -> Option<&ModelDecl> {
@@ -49,19 +59,33 @@ impl RuntimeSchemas {
     }
 
     pub(crate) fn validate_value(&self, type_name: &str, value: &serde_json::Value) -> bool {
+        self.validate_value_as(type_name, value, "invalid_value")
+            .is_ok()
+    }
+
+    fn validate_value_as(
+        &self,
+        type_name: &str,
+        value: &serde_json::Value,
+        invalid_code: &str,
+    ) -> Result<(), String> {
         if let Some(alias) = self.aliases.get(type_name) {
-            return self.validate_type_expr(&alias.aliased, value);
+            return self.validate_type_expr_as(&alias.aliased, value, invalid_code);
         }
 
         if let Some(decl) = self.structs.get(type_name) {
-            return self.validate_struct_fields(&decl.fields, value);
+            return self.validate_struct_fields(&decl.fields, value, invalid_code);
         }
 
         if let Some(decl) = self.models.get(type_name) {
-            return self.validate_model_fields(&decl.fields, value);
+            return self.validate_model_fields_as(&decl.fields, value, invalid_code);
         }
 
-        validate_primitive(type_name, value)
+        if validate_primitive(type_name, value) {
+            Ok(())
+        } else {
+            Err(invalid_code.to_string())
+        }
     }
 
     pub(crate) fn decode_query_params(
@@ -89,11 +113,9 @@ impl RuntimeSchemas {
         }
 
         let value = serde_json::Value::Object(object);
-        if self.validate_value(type_name, &value) {
-            Ok(value)
-        } else {
-            Err(api_invalid_input("invalid_query"))
-        }
+        self.validate_value_as(type_name, &value, "invalid_query")
+            .map_err(|code| api_invalid_input(&code))?;
+        Ok(value)
     }
 
     pub(crate) fn decode_headers(
@@ -125,11 +147,9 @@ impl RuntimeSchemas {
         }
 
         let value = serde_json::Value::Object(object);
-        if self.validate_value(type_name, &value) {
-            Ok(value)
-        } else {
-            Err(api_invalid_input("invalid_headers"))
-        }
+        self.validate_value_as(type_name, &value, "invalid_headers")
+            .map_err(|code| api_invalid_input(&code))?;
+        Ok(value)
     }
 
     pub(crate) fn decode_cookies(
@@ -158,11 +178,9 @@ impl RuntimeSchemas {
         }
 
         let value = serde_json::Value::Object(object);
-        if self.validate_value(type_name, &value) {
-            Ok(value)
-        } else {
-            Err(api_invalid_input("invalid_cookies"))
-        }
+        self.validate_value_as(type_name, &value, "invalid_cookies")
+            .map_err(|code| api_invalid_input(&code))?;
+        Ok(value)
     }
 
     pub(crate) fn validate_model_fields(
@@ -170,14 +188,29 @@ impl RuntimeSchemas {
         fields: &[ModelField],
         value: &serde_json::Value,
     ) -> bool {
+        self.validate_model_fields_as(fields, value, "invalid_value")
+            .is_ok()
+    }
+
+    fn validate_model_fields_as(
+        &self,
+        fields: &[ModelField],
+        value: &serde_json::Value,
+        invalid_code: &str,
+    ) -> Result<(), String> {
         let Some(object) = value.as_object() else {
-            return false;
+            return Err(invalid_code.to_string());
         };
 
-        fields.iter().all(|field| match object.get(&field.name) {
-            Some(value) => self.validate_type_expr(&field.ty, value),
-            None => type_expr_is_optional(&field.ty),
-        })
+        for field in fields {
+            match object.get(&field.name) {
+                Some(value) => self.validate_type_expr_as(&field.ty, value, invalid_code)?,
+                None if type_expr_is_optional(&field.ty) => {}
+                None => return Err(format!("missing_{}", field.name)),
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) fn decode_path_param(
@@ -225,41 +258,96 @@ impl RuntimeSchemas {
         self.primitive_root(&path.segments[0])
     }
 
-    fn validate_type_expr(&self, ty: &TypeExpr, value: &serde_json::Value) -> bool {
+    fn validate_type_expr_as(
+        &self,
+        ty: &TypeExpr,
+        value: &serde_json::Value,
+        invalid_code: &str,
+    ) -> Result<(), String> {
         match ty {
             TypeExpr::Path { path } => {
                 let Some(type_name) = path.segments.first() else {
-                    return false;
+                    return Err(invalid_code.to_string());
                 };
 
                 if path.segments.len() != 1 {
-                    return true;
+                    return Ok(());
                 }
 
-                self.validate_value(type_name, value)
+                self.validate_value_as(type_name, value, invalid_code)
             }
             TypeExpr::Generic { base, args, .. } => {
                 if path_is(base, &["Option"]) && args.len() == 1 {
-                    return value.is_null() || self.validate_type_expr(&args[0], value);
+                    if value.is_null() {
+                        return Ok(());
+                    }
+
+                    return self.validate_type_expr_as(&args[0], value, invalid_code);
                 }
 
-                true
+                Ok(())
             }
             TypeExpr::Option { inner, .. } => {
-                value.is_null() || self.validate_type_expr(inner, value)
+                if value.is_null() {
+                    return Ok(());
+                }
+
+                self.validate_type_expr_as(inner, value, invalid_code)
             }
         }
     }
 
-    fn validate_struct_fields(&self, fields: &[Field], value: &serde_json::Value) -> bool {
+    fn validate_struct_fields(
+        &self,
+        fields: &[Field],
+        value: &serde_json::Value,
+        invalid_code: &str,
+    ) -> Result<(), String> {
         let Some(object) = value.as_object() else {
-            return false;
+            return Err(invalid_code.to_string());
         };
 
-        fields.iter().all(|field| match object.get(&field.name) {
-            Some(value) => self.validate_type_expr(&field.ty, value),
-            None => type_expr_is_optional(&field.ty),
-        })
+        for field in fields {
+            match object.get(&field.name) {
+                Some(value) => {
+                    self.validate_type_expr_as(&field.ty, value, invalid_code)?;
+                    Self::validate_field_rules(field, value)?;
+                }
+                None if type_expr_is_optional(&field.ty) => {}
+                None => return Err(format!("missing_{}", field.name)),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_field_rules(field: &Field, value: &serde_json::Value) -> Result<(), String> {
+        if value.is_null() && type_expr_is_optional(&field.ty) {
+            return Ok(());
+        }
+
+        for validation in &field.validations {
+            match validation {
+                FieldValidation::Email { .. } => {
+                    if !value.as_str().is_some_and(|email| email.contains('@')) {
+                        return Err(invalid_field_code(&field.name));
+                    }
+                }
+                FieldValidation::Length { min, max, .. } => {
+                    let Some(text) = value.as_str() else {
+                        return Err(invalid_field_code(&field.name));
+                    };
+                    let Ok(len) = i64::try_from(text.chars().count()) else {
+                        return Err(invalid_field_code(&field.name));
+                    };
+                    if !(*min..=*max).contains(&len) {
+                        return Err(invalid_field_code(&field.name));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn primitive_root(&self, type_name: &str) -> Option<String> {
@@ -381,6 +469,10 @@ fn validate_primitive(type_name: &str, value: &serde_json::Value) -> bool {
         "F64" => value.as_f64().is_some(),
         _ => false,
     }
+}
+
+fn invalid_field_code(name: &str) -> String {
+    format!("invalid_{name}")
 }
 
 fn is_primitive_type(type_name: &str) -> bool {

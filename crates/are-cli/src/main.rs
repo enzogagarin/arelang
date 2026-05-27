@@ -797,8 +797,8 @@ type SessionId = opaque String
 struct AppState {{}}
 
 struct CreateUserInput {{
-    email: String
-    name: String
+    email: Email validate.email
+    name: String validate.length(min: 2, max: 80)
 }}
 
 struct HealthResponse {{
@@ -806,7 +806,7 @@ struct HealthResponse {{
 }}
 
 struct SearchUsersQuery {{
-    email: Email
+    email: Email validate.email
 }}
 
 struct SearchUsersResponse {{
@@ -814,7 +814,7 @@ struct SearchUsersResponse {{
 }}
 
 struct AuthHeaders {{
-    authorization: String
+    authorization: String validate.length(min: 7, max: 200)
 }}
 
 struct AuthCheckResponse {{
@@ -822,7 +822,7 @@ struct AuthCheckResponse {{
 }}
 
 struct SessionCookies {{
-    session_id: SessionId
+    session_id: SessionId validate.length(min: 6, max: 120)
 }}
 
 struct SessionResponse {{
@@ -846,14 +846,7 @@ fn health(ctx: Http.Context<AppState>) -> HealthResponse {{
     return {{ "status": "ok" }}
 }}
 
-fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {{
-    ensure validate.email(input.email), ApiError.InvalidInput("invalid_email")
-    ensure validate.length(input.name, min: 2, max: 80), ApiError.InvalidInput("invalid_name")
-    return input
-}}
-
 fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {{
-    let input = validate_user(input)?
     let user = ctx.db.users.insert(input)?
     return user
 }}
@@ -863,12 +856,10 @@ fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<
 }}
 
 fn auth_check(ctx: Http.Context<AppState>, headers: AuthHeaders) -> Result<AuthCheckResponse, ApiError> {{
-    ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
     return {{ "authorized": true }}
 }}
 
 fn current_session(ctx: Http.Context<AppState>, cookies: SessionCookies) -> Result<SessionResponse, ApiError> {{
-    ensure validate.length(cookies.session_id, min: 6, max: 120), ApiError.InvalidInput("invalid_session")
     return {{ "session_id": cookies.session_id, "active": true }}
 }}
 
@@ -1071,6 +1062,9 @@ mod tests {
         assert!(source.contains("fn current_session"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
+        assert!(source.contains("email: Email validate.email"));
+        assert!(source.contains("name: String validate.length(min: 2, max: 80)"));
+        assert!(!source.contains("fn validate_user"));
         assert!(source.contains(
             r#"post "/users" body CreateUserInput -> create_user returns User status 201"#
         ));

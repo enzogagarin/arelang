@@ -24,6 +24,7 @@ pub struct HttpRouteContract {
     pub body_type: Option<String>,
     pub query_type: Option<String>,
     pub headers_type: Option<String>,
+    pub cookies_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
     pub path_params: Vec<HttpPathParam>,
@@ -99,6 +100,7 @@ pub struct TestRoute {
     pub body_type: Option<String>,
     pub query_type: Option<String>,
     pub headers_type: Option<String>,
+    pub cookies_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
     pub path_params: Vec<TestPathParam>,
@@ -169,6 +171,7 @@ impl HttpContractManifest {
                 body_type: route.body_type.clone(),
                 query_type: route.query_type.clone(),
                 headers_type: route.headers_type.clone(),
+                cookies_type: route.cookies_type.clone(),
                 response_type: route.response_type.clone(),
                 status: route.status,
                 path_params: route
@@ -247,6 +250,10 @@ pub(crate) fn route_summary_line(route: &HttpRouteContract) -> String {
         contract.push_str(" headers ");
         contract.push_str(headers_type);
     }
+    if let Some(cookies_type) = &route.cookies_type {
+        contract.push_str(" cookies ");
+        contract.push_str(cookies_type);
+    }
     if let Some(response_type) = &route.response_type {
         contract.push_str(" returns ");
         contract.push_str(response_type);
@@ -307,6 +314,7 @@ fn runtime_route(route: &RouteDecl) -> HttpRouteContract {
         body_type: route.body_type.as_ref().map(type_expr_name),
         query_type: route.query_type.as_ref().map(type_expr_name),
         headers_type: route.headers_type.as_ref().map(type_expr_name),
+        cookies_type: route.cookies_type.as_ref().map(type_expr_name),
         response_type: route.response_type.as_ref().map(type_expr_name),
         status: route.status.map(|status| status.value),
         path_params: path_params_from_path(&route.path),

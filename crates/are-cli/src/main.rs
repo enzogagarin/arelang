@@ -237,6 +237,7 @@ fn create_project(
             println!(
                 "  curl http://{host}:{port}/users/auth-check -H 'authorization: Bearer dev-token'"
             );
+            println!("  curl http://{host}:{port}/session -H 'Cookie: session_id=session-dev-123'");
             println!("  curl http://{host}:{port}/users/1");
         }
     }
@@ -380,6 +381,7 @@ fn print_test_report(report: &TestReport) {
             route.body_type.as_deref(),
             route.query_type.as_deref(),
             route.headers_type.as_deref(),
+            route.cookies_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -522,6 +524,7 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
             route.body_type.as_deref(),
             route.query_type.as_deref(),
             route.headers_type.as_deref(),
+            route.cookies_type.as_deref(),
             route.response_type.as_deref(),
             route.status,
         );
@@ -664,6 +667,7 @@ fn route_contract_label(
     body_type: Option<&str>,
     query_type: Option<&str>,
     headers_type: Option<&str>,
+    cookies_type: Option<&str>,
     response_type: Option<&str>,
     status: Option<u16>,
 ) -> String {
@@ -678,6 +682,10 @@ fn route_contract_label(
     if let Some(headers_type) = headers_type {
         contract.push_str(" headers ");
         contract.push_str(headers_type);
+    }
+    if let Some(cookies_type) = cookies_type {
+        contract.push_str(" cookies ");
+        contract.push_str(cookies_type);
     }
     if let Some(response_type) = response_type {
         contract.push_str(" returns ");
@@ -784,6 +792,7 @@ use std.validate
 
 type UserId = opaque U64
 type Email = opaque String
+type SessionId = opaque String
 
 struct AppState {{}}
 
@@ -810,6 +819,15 @@ struct AuthHeaders {{
 
 struct AuthCheckResponse {{
     authorized: Bool
+}}
+
+struct SessionCookies {{
+    session_id: SessionId
+}}
+
+struct SessionResponse {{
+    session_id: SessionId
+    active: Bool
 }}
 
 model User {{
@@ -851,6 +869,12 @@ fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthChec
     return {{ "authorized": true }}
 }}
 
+fn current_session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SessionResponse, ApiError> {{
+    let cookies = req.cookies<SessionCookies>()?
+    ensure validate.length(cookies.session_id, min: 6, max: 120), ApiError.InvalidInput("invalid_session")
+    return {{ "session_id": cookies.session_id, "active": true }}
+}}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {{
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -872,6 +896,7 @@ service {service_name}(state: AppState) {{
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
+    get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200
     get "/users/{{id: UserId}}" -> get_user returns User status 200
 }}
 "#
@@ -977,6 +1002,7 @@ mod tests {
                 Some("CreateUserInput"),
                 None,
                 None,
+                None,
                 Some("User"),
                 Some(201)
             ),
@@ -987,6 +1013,7 @@ mod tests {
                 "/users/search",
                 None,
                 Some("SearchUsersQuery"),
+                None,
                 None,
                 Some("SearchUsersResponse"),
                 Some(200)
@@ -999,10 +1026,23 @@ mod tests {
                 None,
                 None,
                 Some("AuthHeaders"),
+                None,
                 Some("AuthCheckResponse"),
                 Some(200)
             ),
             "/users/auth-check headers AuthHeaders returns AuthCheckResponse status 200"
+        );
+        assert_eq!(
+            route_contract_label(
+                "/session",
+                None,
+                None,
+                None,
+                Some("SessionCookies"),
+                Some("SessionResponse"),
+                Some(200)
+            ),
+            "/session cookies SessionCookies returns SessionResponse status 200"
         );
     }
 
@@ -1032,6 +1072,7 @@ mod tests {
         assert!(source.contains("fn create_user"));
         assert!(source.contains("fn search_users"));
         assert!(source.contains("fn auth_check"));
+        assert!(source.contains("fn current_session"));
         assert!(source.contains("service GeneratedUsersApi"));
         assert!(source.contains("use Http.error_map(map_error)"));
         assert!(source.contains(
@@ -1042,6 +1083,9 @@ mod tests {
         ));
         assert!(source.contains(
             r#"get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200"#
+        ));
+        assert!(source.contains(
+            r#"get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200"#
         ));
         assert!(
             source.contains(r#"get "/users/{id: UserId}" -> get_user returns User status 200"#)

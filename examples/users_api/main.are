@@ -3,6 +3,7 @@ use std.validate
 
 type UserId = opaque U64
 type Email = opaque String
+type SessionId = opaque String
 
 struct AppState {}
 
@@ -29,6 +30,15 @@ struct AuthHeaders {
 
 struct AuthCheckResponse {
     authorized: Bool
+}
+
+struct SessionCookies {
+    session_id: SessionId
+}
+
+struct SessionResponse {
+    session_id: SessionId
+    active: Bool
 }
 
 model User {
@@ -70,6 +80,12 @@ fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthChec
     return { "authorized": true }
 }
 
+fn current_session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SessionResponse, ApiError> {
+    let cookies = req.cookies<SessionCookies>()?
+    ensure validate.length(cookies.session_id, min: 6, max: 120), ApiError.InvalidInput("invalid_session")
+    return { "session_id": cookies.session_id, "active": true }
+}
+
 fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
     let id = ctx.param<UserId>("id")?
     let user = ctx.db.users.get(id)?
@@ -91,5 +107,6 @@ service UsersApi(state: AppState) {
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
+    get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }

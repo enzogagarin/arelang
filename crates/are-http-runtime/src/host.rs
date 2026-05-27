@@ -52,6 +52,17 @@ impl Host for RuntimeHost<'_> {
         self.schemas.decode_headers(type_name, self.headers)
     }
 
+    fn read_cookies(
+        &mut self,
+        type_name: Option<&str>,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let Some(type_name) = type_name else {
+            return Ok(serde_json::Value::Object(serde_json::Map::new()));
+        };
+
+        self.schemas.decode_cookies(type_name, self.headers)
+    }
+
     fn validate_email(&mut self, value: &serde_json::Value) -> Result<bool, InterpretError> {
         let Some(email) = value.as_str() else {
             return Ok(false);

@@ -118,6 +118,16 @@ assert_users_api_flow() {
     assert_eq "$auth_status" "200" "$label auth check HTTP status"
     assert_file_contains "$TMP_DIR/${label}_auth_check.json" '"authorized":true' "$label auth check response"
 
+    local session_status
+    session_status="$(
+        curl -sS -o "$TMP_DIR/${label}_session.json" -w '%{http_code}' \
+            "$base_url/session" \
+            -H 'Cookie: session_id=session-dev-123'
+    )"
+    assert_eq "$session_status" "200" "$label session HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_session.json" '"session_id":"session-dev-123"' "$label session response"
+    assert_file_contains "$TMP_DIR/${label}_session.json" '"active":true' "$label session response"
+
     local get_status
     get_status="$(curl -sS -o "$TMP_DIR/${label}_get_user.json" -w '%{http_code}' "$base_url/users/1")"
     assert_eq "$get_status" "200" "$label get user HTTP status"
@@ -147,6 +157,8 @@ assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/search"' "users Open
 assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "query"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/auth-check"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "header"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"/session"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "cookie"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"#/components/schemas/User"' "users OpenAPI document"
 run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" --check --output "$TMP_DIR/users_openapi.json"
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json

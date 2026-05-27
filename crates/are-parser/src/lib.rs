@@ -376,9 +376,11 @@ impl<'a> Parser<'a> {
         let mut body_type = None;
         let mut query_type = None;
         let mut headers_type = None;
+        let mut cookies_type = None;
         while self.check_identifier("body")
             || self.check_identifier("query")
             || self.check_identifier("headers")
+            || self.check_identifier("cookies")
         {
             if let Some(keyword_range) = self.match_identifier("body") {
                 let parsed_body_type = self.parse_type_expr()?;
@@ -419,6 +421,19 @@ impl<'a> Parser<'a> {
                 } else {
                     headers_type = Some(parsed_headers_type);
                 }
+            } else if let Some(keyword_range) = self.match_identifier("cookies") {
+                let parsed_cookies_type = self.parse_type_expr()?;
+                if cookies_type.is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_PARSE_0010",
+                        &self.file,
+                        SourceRange::new(keyword_range.start, parsed_cookies_type.range().end),
+                        "duplicate route cookies contract",
+                        "a route can declare at most one `cookies Payload` clause",
+                    ));
+                } else {
+                    cookies_type = Some(parsed_cookies_type);
+                }
             }
         }
         self.expect_kind(&TokenKind::Arrow, "expected `->` before route handler")?;
@@ -449,6 +464,7 @@ impl<'a> Parser<'a> {
             body_type,
             query_type,
             headers_type,
+            cookies_type,
             handler,
             response_type,
             status,

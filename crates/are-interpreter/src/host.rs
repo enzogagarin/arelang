@@ -26,6 +26,14 @@ pub trait Host {
     /// as the requested type.
     fn read_headers(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
 
+    /// Decode the current HTTP request cookies as a typed JSON object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when required cookies are missing or cannot be decoded
+    /// as the requested type.
+    fn read_cookies(&mut self, type_name: Option<&str>) -> Result<JsonValue, InterpretError>;
+
     /// Check whether a JSON string is email-like.
     ///
     /// # Errors
@@ -89,6 +97,10 @@ impl Host for NoopHost {
 
     fn read_headers(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression("req.headers".into()))
+    }
+
+    fn read_cookies(&mut self, _type_name: Option<&str>) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression("req.cookies".into()))
     }
 
     fn validate_email(&mut self, _value: &JsonValue) -> Result<bool, InterpretError> {

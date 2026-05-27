@@ -2,7 +2,7 @@ use crate::contracts::{
     HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpFieldSchema, HttpModelFieldSchema,
     HttpModelSchema, HttpRouteContract, HttpSchemaManifest, HttpStructSchema,
 };
-use crate::schemas::header_name_for_field;
+use crate::schemas::{cookie_name_for_field, header_name_for_field};
 use are_project::Manifest;
 use serde_json::{Map, Value, json};
 
@@ -111,6 +111,9 @@ fn parameters(route: &HttpRouteContract, schemas: &HttpSchemaManifest) -> Vec<Va
     if let Some(headers_type) = &route.headers_type {
         parameters.extend(field_parameters(headers_type, schemas, "header"));
     }
+    if let Some(cookies_type) = &route.cookies_type {
+        parameters.extend(field_parameters(cookies_type, schemas, "cookie"));
+    }
 
     parameters
 }
@@ -146,6 +149,8 @@ fn field_parameters(type_name: &str, schemas: &HttpSchemaManifest, location: &st
 fn field_parameter(name: &str, ty: &str, required: bool, location: &str) -> Value {
     let name = if location == "header" {
         header_name_for_field(name)
+    } else if location == "cookie" {
+        cookie_name_for_field(name)
     } else {
         name.to_string()
     };

@@ -15,6 +15,7 @@ impl TypeChecker<'_> {
             self.check_route_body_contract(route);
             self.check_route_query_contract(route);
             self.check_route_headers_contract(route);
+            self.check_route_cookies_contract(route);
             self.check_route_response_contract(route);
 
             let Some(handler) = route
@@ -187,6 +188,25 @@ impl TypeChecker<'_> {
         }
     }
 
+    fn check_route_cookies_contract(&mut self, route: &RouteDecl) {
+        let Some(cookies_type) = &route.cookies_type else {
+            return;
+        };
+
+        if !self.is_local_payload_type(cookies_type) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0450",
+                &self.file,
+                cookies_type.range(),
+                format!(
+                    "route cookies `{}` is not a local payload type",
+                    type_name(cookies_type)
+                ),
+                "cookies contracts should name a local struct such as `SessionCookies`",
+            ));
+        }
+    }
+
     fn check_route_response_contract(&mut self, route: &RouteDecl) {
         if let Some(response_type) = &route.response_type
             && !self.is_response_payload_type(response_type)
@@ -227,6 +247,7 @@ impl TypeChecker<'_> {
         self.check_route_body_decode_contract(route, handler, &uses);
         self.check_route_query_decode_contract(route, handler, &uses);
         self.check_route_headers_decode_contract(route, handler, &uses);
+        self.check_route_cookies_decode_contract(route, handler, &uses);
     }
 
     fn check_route_path_param_contract(
@@ -466,6 +487,61 @@ impl TypeChecker<'_> {
                     handler.name
                 ),
                 "declare the route headers as `get \"/path\" headers HeaderPayload -> handler`",
+            ));
+        }
+    }
+
+    fn check_route_cookies_decode_contract(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        uses: &HandlerIoUses,
+    ) {
+        if let Some(cookies_type) = &route.cookies_type {
+            let expected = type_name(cookies_type);
+            if uses.request_cookies.is_empty() {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0451",
+                    &self.file,
+                    route.range,
+                    format!(
+                        "route cookies `{expected}` is not decoded by handler `{}`",
+                        handler.name
+                    ),
+                    "decode the declared cookies with `req.cookies<T>()` inside the route handler",
+                ));
+                return;
+            }
+
+            if !uses
+                .request_cookies
+                .iter()
+                .any(|cookies_use| cookies_use.ty.as_deref() == Some(expected.as_str()))
+            {
+                let actual = uses
+                    .request_cookies
+                    .iter()
+                    .filter_map(|cookies_use| cookies_use.ty.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0452",
+                    &self.file,
+                    route.range,
+                    format!("route cookies `{expected}` does not match handler decode `{actual}`"),
+                    "the service route cookies contract and req.cookies<T>() type must match",
+                ));
+            }
+        } else if let Some(cookies_use) = uses.request_cookies.first() {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0453",
+                &self.file,
+                cookies_use.range,
+                format!(
+                    "handler `{}` decodes cookies without a route cookies contract",
+                    handler.name
+                ),
+                "declare the route cookies as `get \"/path\" cookies CookiePayload -> handler`",
             ));
         }
     }
@@ -894,12 +970,19 @@ struct RequestHeadersUse {
     range: SourceRange,
 }
 
+#[derive(Debug, Clone)]
+struct RequestCookiesUse {
+    ty: Option<String>,
+    range: SourceRange,
+}
+
 #[derive(Debug, Default)]
 struct HandlerIoUses {
     path_params: Vec<PathParamUse>,
     request_bodies: Vec<RequestBodyUse>,
     request_queries: Vec<RequestQueryUse>,
     request_headers: Vec<RequestHeadersUse>,
+    request_cookies: Vec<RequestCookiesUse>,
 }
 
 fn collect_handler_io_uses(function: &FunctionDecl) -> HandlerIoUses {
@@ -968,6 +1051,11 @@ fn collect_expr_io_uses(expr: &Expr, uses: &mut HandlerIoUses) {
                 });
             } else if callee_name == "req.headers" {
                 uses.request_headers.push(RequestHeadersUse {
+                    ty: single_type_arg_name(type_args),
+                    range: *range,
+                });
+            } else if callee_name == "req.cookies" {
+                uses.request_cookies.push(RequestCookiesUse {
                     ty: single_type_arg_name(type_args),
                     range: *range,
                 });

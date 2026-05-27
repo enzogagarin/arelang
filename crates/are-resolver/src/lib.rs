@@ -170,6 +170,9 @@ impl<'a> Resolver<'a> {
             if let Some(headers_type) = &route.headers_type {
                 self.resolve_type_expr(headers_type);
             }
+            if let Some(cookies_type) = &route.cookies_type {
+                self.resolve_type_expr(cookies_type);
+            }
             if let Some(response_type) = &route.response_type {
                 self.resolve_type_expr(response_type);
             }

@@ -54,6 +54,7 @@ fn formats_route_summary_lines() {
         body_type: None,
         query_type: None,
         headers_type: Some("AuthHeaders".to_string()),
+        cookies_type: None,
         response_type: Some("AuthCheckResponse".to_string()),
         status: Some(200),
         path_params: Vec::new(),
@@ -74,7 +75,7 @@ fn builds_http_contract_manifest_from_service() {
         HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
 
     assert_eq!(contracts.service, "UsersApi");
-    assert_eq!(contracts.routes.len(), 5);
+    assert_eq!(contracts.routes.len(), 6);
     assert!(contracts.has("POST", "/users"));
     assert_eq!(contracts.error_mapper.as_deref(), Some("map_error"));
     assert_contract_schemas(&contracts);
@@ -108,6 +109,20 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(
         auth_check.response_type.as_deref(),
         Some("AuthCheckResponse")
+    );
+
+    let current_session = contracts
+        .routes
+        .iter()
+        .find(|route| route.method == "GET" && route.path == "/session")
+        .expect("GET /session");
+    assert_eq!(
+        current_session.cookies_type.as_deref(),
+        Some("SessionCookies")
+    );
+    assert_eq!(
+        current_session.response_type.as_deref(),
+        Some("SessionResponse")
     );
 
     let get_user = contracts
@@ -252,6 +267,37 @@ fn handles_users_api_header_contracts() {
 }
 
 #[test]
+fn handles_users_api_cookie_contracts() {
+    let state = RuntimeState::default();
+    let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
+    assert!(check.ok(), "{:#?}", check.diagnostics);
+    let service = find_single_service(&check.modules).expect("single service");
+    let contracts =
+        HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
+    let functions = RuntimeFunctions::from_modules(&check.modules);
+
+    let active = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/session", "")
+            .with_header("Cookie", "theme=dark; session_id=session+dev-123"),
+    );
+    assert_eq!(active.status, 200);
+    assert_eq!(active.body["session_id"], "session+dev-123");
+    assert_eq!(active.body["active"], true);
+
+    let missing = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/session", ""),
+    );
+    assert_eq!(missing.status, 400);
+    assert_eq!(missing.body["error"], "missing_session_id");
+}
+
+#[test]
 fn runtime_store_uses_model_collection_contracts() {
     let schemas = RuntimeSchemas {
         models: [("Post".to_string(), model_decl("Post", "title"))].into(),
@@ -315,7 +361,7 @@ fn tests_users_api_project() {
     let report = test_project(Path::new("../../examples/users_api")).expect("project tests");
     assert_eq!(report.package, "users-api");
     assert_eq!(report.service, "UsersApi");
-    assert_eq!(report.routes.len(), 5);
+    assert_eq!(report.routes.len(), 6);
     assert_eq!(report.scenarios.len(), 1);
     assert_eq!(report.scenarios[0].name, "users API HTTP flow");
 }
@@ -362,6 +408,15 @@ fn exports_users_api_openapi_document() {
     assert_eq!(auth_header_param["required"], true);
     assert_eq!(auth_header_param["schema"]["type"], "string");
 
+    let session_cookie_param = &document["paths"]["/session"]["get"]["parameters"][0];
+    assert_eq!(session_cookie_param["name"], "session_id");
+    assert_eq!(session_cookie_param["in"], "cookie");
+    assert_eq!(session_cookie_param["required"], true);
+    assert_eq!(
+        session_cookie_param["schema"]["$ref"],
+        "#/components/schemas/SessionId"
+    );
+
     let user = &document["components"]["schemas"]["User"];
     assert_eq!(user["x-are-collection"], "users");
     assert_eq!(user["properties"]["id"]["x-are-primary"], true);
@@ -394,6 +449,7 @@ fn route(
         body_type: body_type.map(str::to_string),
         query_type: None,
         headers_type: None,
+        cookies_type: None,
         response_type: response_type.map(str::to_string),
         status,
         path_params: Vec::new(),

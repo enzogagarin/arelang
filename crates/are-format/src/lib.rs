@@ -284,6 +284,10 @@ fn format_service(output: &mut String, decl: &ServiceDecl) {
             output.push_str(" headers ");
             output.push_str(&format_type_expr(headers_type));
         }
+        if let Some(cookies_type) = &route.cookies_type {
+            output.push_str(" cookies ");
+            output.push_str(&format_type_expr(cookies_type));
+        }
         output.push_str(" -> ");
         output.push_str(&format_path(&route.handler));
         if let Some(response_type) = &route.response_type {

@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 21);
+    assert_eq!(module.items.len(), 25);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -123,6 +123,7 @@ fn parses_method_shorthand_route_contracts() {
                 post "/users" body CreateUserInput -> create_user returns User status 201
                 get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
                 get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
+                get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200
                 get "/users/{id: UserId}" -> get_user returns User status 200
             }
         "#;
@@ -157,11 +158,19 @@ fn parses_method_shorthand_route_contracts() {
     assert!(service.routes[2].headers_type.is_some());
     assert_eq!(service.routes[2].status.expect("status").value, 200);
     assert_eq!(service.routes[3].method, "GET");
-    assert_eq!(service.routes[3].path, "/users/{id: UserId}");
+    assert_eq!(service.routes[3].path, "/session");
     assert!(service.routes[3].body_type.is_none());
     assert!(service.routes[3].query_type.is_none());
     assert!(service.routes[3].headers_type.is_none());
+    assert!(service.routes[3].cookies_type.is_some());
     assert_eq!(service.routes[3].status.expect("status").value, 200);
+    assert_eq!(service.routes[4].method, "GET");
+    assert_eq!(service.routes[4].path, "/users/{id: UserId}");
+    assert!(service.routes[4].body_type.is_none());
+    assert!(service.routes[4].query_type.is_none());
+    assert!(service.routes[4].headers_type.is_none());
+    assert!(service.routes[4].cookies_type.is_none());
+    assert_eq!(service.routes[4].status.expect("status").value, 200);
 }
 
 #[test]
@@ -171,6 +180,7 @@ fn rejects_duplicate_route_input_contracts() {
                 post "/users" body CreateUserInput body OtherInput -> create_user returns User status 201
                 get "/users/search" query SearchUsersQuery query OtherQuery -> search_users returns SearchUsersResponse status 200
                 get "/users/auth-check" headers AuthHeaders headers OtherHeaders -> auth_check returns AuthCheckResponse status 200
+                get "/session" cookies SessionCookies cookies OtherCookies -> current_session returns SessionResponse status 200
             }
         "#;
     let file = Path::new("test.are");
@@ -180,7 +190,7 @@ fn rejects_duplicate_route_input_contracts() {
     let (module, diagnostics) = parse_tokens(file, &tokens);
 
     assert!(module.is_none());
-    assert_eq!(diagnostics.len(), 3, "{diagnostics:#?}");
+    assert_eq!(diagnostics.len(), 4, "{diagnostics:#?}");
     assert!(
         diagnostics
             .iter()
@@ -200,5 +210,10 @@ fn rejects_duplicate_route_input_contracts() {
         diagnostics
             .iter()
             .any(|diagnostic| diagnostic.problem == "duplicate route headers contract")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.problem == "duplicate route cookies contract")
     );
 }

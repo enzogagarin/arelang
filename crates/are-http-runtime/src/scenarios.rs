@@ -96,6 +96,18 @@ pub(crate) fn test_users_scenario(
     expect_json_bool(&auth_check, "authorized", true, "GET /users/auth-check")?;
     checks.push("GET /users/auth-check decodes typed headers".to_string());
 
+    let session = runtime_response(
+        &state,
+        &prepared.contracts,
+        &prepared.functions,
+        &RuntimeRequest::new(Method::Get, "/session", "")
+            .with_header("cookie", "session_id=session-dev-123"),
+    );
+    expect_status(&session, 200, "GET /session")?;
+    expect_json_string(&session, "session_id", "session-dev-123", "GET /session")?;
+    expect_json_bool(&session, "active", true, "GET /session")?;
+    checks.push("GET /session decodes typed cookies".to_string());
+
     let fetched = runtime_response(
         &state,
         &prepared.contracts,

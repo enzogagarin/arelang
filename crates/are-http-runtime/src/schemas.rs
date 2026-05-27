@@ -132,6 +132,39 @@ impl RuntimeSchemas {
         }
     }
 
+    pub(crate) fn decode_cookies(
+        &self,
+        type_name: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<serde_json::Value, InterpretError> {
+        let values = parse_cookie_header(headers);
+        let fields = self
+            .payload_fields(type_name)
+            .ok_or_else(|| api_invalid_input("invalid_cookies"))?;
+        let mut object = serde_json::Map::new();
+
+        for field in fields {
+            let cookie_name = cookie_name_for_field(&field.name);
+            let Some(raw) = values.get(cookie_name.as_str()) else {
+                if field.optional {
+                    continue;
+                }
+
+                return Err(api_invalid_input(&format!("missing_{}", field.name)));
+            };
+
+            let value = self.decode_text_value(field.ty, &field.name, raw)?;
+            object.insert(field.name, value);
+        }
+
+        let value = serde_json::Value::Object(object);
+        if self.validate_value(type_name, &value) {
+            Ok(value)
+        } else {
+            Err(api_invalid_input("invalid_cookies"))
+        }
+    }
+
     pub(crate) fn validate_model_fields(
         &self,
         fields: &[ModelField],
@@ -369,18 +402,50 @@ fn parse_query_string(query: &str) -> HashMap<String, String> {
     values
 }
 
+fn parse_cookie_header(headers: &HashMap<String, String>) -> HashMap<String, String> {
+    let Some(cookie_header) = headers.get("cookie") else {
+        return HashMap::new();
+    };
+
+    let mut values = HashMap::new();
+    for pair in cookie_header
+        .split(';')
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+    {
+        let (key, value) = pair
+            .split_once('=')
+            .map_or((pair, ""), |(key, value)| (key.trim(), value.trim()));
+        values.insert(percent_decode_cookie(key), percent_decode_cookie(value));
+    }
+
+    values
+}
+
 pub(crate) fn header_name_for_field(name: &str) -> String {
     name.replace('_', "-").to_ascii_lowercase()
 }
 
+pub(crate) fn cookie_name_for_field(name: &str) -> String {
+    name.to_string()
+}
+
 fn percent_decode(value: &str) -> String {
+    percent_decode_with_plus(value, true)
+}
+
+fn percent_decode_cookie(value: &str) -> String {
+    percent_decode_with_plus(value, false)
+}
+
+fn percent_decode_with_plus(value: &str, plus_as_space: bool) -> String {
     let bytes = value.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
 
     while index < bytes.len() {
         match bytes[index] {
-            b'+' => {
+            b'+' if plus_as_space => {
                 output.push(b' ');
                 index += 1;
             }

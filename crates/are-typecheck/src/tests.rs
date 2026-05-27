@@ -304,6 +304,61 @@ fn checks_headers_contract_against_handler_decode_type() {
 }
 
 #[test]
+fn requires_cookies_contract_when_handler_decodes_cookies() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct SessionCookies { session_id: String }
+            enum ApiError { Failed }
+
+            fn session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let cookies = req.cookies<SessionCookies>()?
+                return Http.Response.ok(cookies)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/session" -> session
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0453");
+}
+
+#[test]
+fn checks_cookies_contract_against_handler_decode_type() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct SessionCookies { session_id: String }
+            struct OtherCookies { theme: String }
+            enum ApiError { Failed }
+
+            fn session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError> {
+                let cookies = req.cookies<OtherCookies>()?
+                return Http.Response.ok(cookies)
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {}
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/session" cookies SessionCookies -> session
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_HTTP_0452");
+}
+
+#[test]
 fn checks_response_contract_against_handler_body() {
     let source = r#"
             use std.http as Http

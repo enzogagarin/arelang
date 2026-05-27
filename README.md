@@ -110,7 +110,7 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 
 `are fmt` rewrites `.are` files into the canonical Arelang style. `--check` verifies formatting without writing, which is what CI uses. The first formatter intentionally refuses to rewrite files with comments until comment-preserving formatting is implemented.
 
-`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, request JSON/query/header/cookie decoding, validation, route params, database access, return types, route request/response/status contracts, and `?` usage.
+`are check` currently lexes, parses, resolves top-level symbols, and typechecks the first HTTP service contract rules. Human diagnostics include source snippets and `help:` suggestions for nearby names, while `--json` keeps the structured diagnostic payload for tools and CI. The parser now also builds a minimal function-body AST for `let`, `return`, `ensure`, `match`, `?`, generic calls, enum constructors, object literals, field paths, booleans, and named arguments. It also understands `model` declarations with field attributes such as `primary` and `unique`. Function bodies get semantic checks for local function calls, enum match coverage, std HTTP calls, typed route contract parameters, request JSON/query/header/cookie decoding, validation, route params, database access, return types, route request/response/status contracts, and `?` usage.
 
 `are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
 
@@ -141,30 +141,32 @@ help: did you mean `create_user`?
 curl http://127.0.0.1:8081/ping
 ```
 
-`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, `GET /users/search`, `GET /users/auth-check`, `GET /session`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly, so handlers can decode HTTP inputs and return domain payloads without manually wrapping every success response:
+`examples/users_api` is the first backend-shaped demo. It listens on `127.0.0.1:8080`. The `/health`, `POST /users`, `GET /users/search`, `GET /users/auth-check`, `GET /session`, and `GET /users/{id: UserId}` routes are executed from their Arelang function bodies through the MVP interpreter. Service routes now carry typed backend contracts directly, so handlers can receive HTTP inputs as ordinary typed parameters and return domain payloads without manually wrapping every success response:
 
 ```are
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
-    let input = validate_user(req.json<CreateUserInput>()?)?
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {
+    let input = validate_user(input)?
     let user = ctx.db.users.insert(input)?
     return user
 }
 
-fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SearchUsersResponse, ApiError> {
-    let query = req.query<SearchUsersQuery>()?
+fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<SearchUsersResponse, ApiError> {
     return { "email": query.email }
 }
 
-fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthCheckResponse, ApiError> {
-    let headers = req.headers<AuthHeaders>()?
+fn auth_check(ctx: Http.Context<AppState>, headers: AuthHeaders) -> Result<AuthCheckResponse, ApiError> {
     ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
     return { "authorized": true }
 }
 
-fn current_session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SessionResponse, ApiError> {
-    let cookies = req.cookies<SessionCookies>()?
+fn current_session(ctx: Http.Context<AppState>, cookies: SessionCookies) -> Result<SessionResponse, ApiError> {
     ensure validate.length(cookies.session_id, min: 6, max: 120), ApiError.InvalidInput("invalid_session")
     return { "session_id": cookies.session_id, "active": true }
+}
+
+fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError> {
+    let user = ctx.db.users.get(id)?
+    return user
 }
 ```
 
@@ -181,7 +183,7 @@ service UsersApi(state: AppState) {
 }
 ```
 
-The compiler checks that `post "/users" body CreateUserInput` is decoded by the handler with `req.json<CreateUserInput>()`, that `get "/users/search" query SearchUsersQuery` is decoded with `req.query<SearchUsersQuery>()`, that `get "/users/auth-check" headers AuthHeaders` is decoded with `req.headers<AuthHeaders>()`, that `get "/session" cookies SessionCookies` is decoded with `req.cookies<SessionCookies>()`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is read as `ctx.param<UserId>("id")`. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`.
+The compiler checks that `post "/users" body CreateUserInput` is bound by the handler as `input: CreateUserInput`, that `get "/users/search" query SearchUsersQuery` is bound as `query: SearchUsersQuery`, that `get "/users/auth-check" headers AuthHeaders` is bound as `headers: AuthHeaders`, that `get "/session" cookies SessionCookies` is bound as `cookies: SessionCookies`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is bound as `id: UserId`. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Validation can live in local Arelang functions, `ensure` can raise enum errors such as `ApiError.InvalidInput("invalid_email")`, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`. The lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, and `ctx.param<T>()` calls remain available for compatibility and escape hatches.
 
 ```sh
 curl http://127.0.0.1:8080/health

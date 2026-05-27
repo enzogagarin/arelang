@@ -53,7 +53,7 @@ enum ApiError {
     Internal(message: String)
 }
 
-fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse {
+fn health(ctx: Http.Context<AppState>) -> HealthResponse {
     return { "status": "ok" }
 }
 
@@ -63,31 +63,27 @@ fn validate_user(input: CreateUserInput) -> Result<CreateUserInput, ApiError> {
     return input
 }
 
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
-    let input = validate_user(req.json<CreateUserInput>()?)?
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {
+    let input = validate_user(input)?
     let user = ctx.db.users.insert(input)?
     return user
 }
 
-fn search_users(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SearchUsersResponse, ApiError> {
-    let query = req.query<SearchUsersQuery>()?
+fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<SearchUsersResponse, ApiError> {
     return { "email": query.email }
 }
 
-fn auth_check(ctx: Http.Context<AppState>, req: Http.Request) -> Result<AuthCheckResponse, ApiError> {
-    let headers = req.headers<AuthHeaders>()?
+fn auth_check(ctx: Http.Context<AppState>, headers: AuthHeaders) -> Result<AuthCheckResponse, ApiError> {
     ensure validate.length(headers.authorization, min: 7, max: 200), ApiError.InvalidInput("invalid_authorization")
     return { "authorized": true }
 }
 
-fn current_session(ctx: Http.Context<AppState>, req: Http.Request) -> Result<SessionResponse, ApiError> {
-    let cookies = req.cookies<SessionCookies>()?
+fn current_session(ctx: Http.Context<AppState>, cookies: SessionCookies) -> Result<SessionResponse, ApiError> {
     ensure validate.length(cookies.session_id, min: 6, max: 120), ApiError.InvalidInput("invalid_session")
     return { "session_id": cookies.session_id, "active": true }
 }
 
-fn get_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
-    let id = ctx.param<UserId>("id")?
+fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError> {
     let user = ctx.db.users.get(id)?
     return user
 }

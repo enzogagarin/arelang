@@ -70,7 +70,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
-- typecheck function signatures, generic arity, route handlers, route body/query/headers/cookies contracts, route response/status contracts, typed path params, and HTTP error mappers
+- typecheck function signatures, generic arity, route handlers, route body/query/headers/cookies contracts, route contract parameter binding, route response/status contracts, typed path params, and HTTP error mappers
 - resolve model database calls such as `ctx.db.users.insert` from local `model User` declarations
 - emit human or JSON diagnostics
 

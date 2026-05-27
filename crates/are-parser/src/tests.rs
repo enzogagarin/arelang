@@ -57,7 +57,7 @@ fn parses_users_api_shape() {
     let FunctionBody::Parsed { block } = &get_user.body else {
         panic!("get_user body should parse into statements");
     };
-    assert_eq!(block.statements.len(), 3);
+    assert_eq!(block.statements.len(), 2);
     assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
     assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 

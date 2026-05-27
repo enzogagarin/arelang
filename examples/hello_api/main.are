@@ -6,7 +6,7 @@ struct PingResponse {
     message: String
 }
 
-fn ping(ctx: Http.Context<AppState>, req: Http.Request) -> PingResponse {
+fn ping(ctx: Http.Context<AppState>) -> PingResponse {
     return { "message": "pong" }
 }
 

@@ -139,6 +139,51 @@ fn checks_typed_route_params_against_handler_reads() {
 }
 
 #[test]
+fn accepts_route_contract_bound_handler_params() {
+    let source = r#"
+            use std.http as Http
+
+            type UserId = opaque U64
+            struct AppState {}
+            struct CreateUserInput { email: String }
+            struct SearchUsersQuery { email: String }
+            struct AuthHeaders { authorization: String }
+            struct SessionCookies { session_id: String }
+
+            fn create(ctx: Http.Context<AppState>, input: CreateUserInput) -> Http.Response {
+                return Http.Response.ok(input)
+            }
+
+            fn search(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Http.Response {
+                return Http.Response.ok({ "email": query.email })
+            }
+
+            fn auth(ctx: Http.Context<AppState>, headers: AuthHeaders) -> Http.Response {
+                return Http.Response.ok({ "authorization": headers.authorization })
+            }
+
+            fn session(ctx: Http.Context<AppState>, cookies: SessionCookies) -> Http.Response {
+                return Http.Response.ok({ "session_id": cookies.session_id })
+            }
+
+            fn get(ctx: Http.Context<AppState>, id: UserId) -> Http.Response {
+                return Http.Response.ok({ "id": id })
+            }
+
+            service Api(state: AppState) {
+                post "/users" body CreateUserInput -> create
+                get "/users/search" query SearchUsersQuery -> search
+                get "/users/auth-check" headers AuthHeaders -> auth
+                get "/session" cookies SessionCookies -> session
+                get "/users/{id: UserId}" -> get
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
 fn requires_body_contract_when_handler_decodes_json() {
     let source = r#"
             use std.http as Http

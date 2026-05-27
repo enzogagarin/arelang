@@ -25,7 +25,7 @@ let mut count = 0
 ## Functions
 
 ```are
-fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse {
+fn health(ctx: Http.Context<AppState>) -> HealthResponse {
     return { "status": "ok" }
 }
 ```
@@ -37,8 +37,7 @@ Functions use explicit return types. A missing return type means `Unit` only if 
 v0 uses explicit `Result<T, E>`.
 
 ```are
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError> {
-    let input = req.json<CreateUserInput>()?
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {
     let user = ctx.db.users.insert(input)?
     return user
 }
@@ -93,7 +92,7 @@ service UsersApi(state: AppState) {
 }
 ```
 
-The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, headers contracts, cookies contracts, response contracts, status contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with `req.json<CreateUserInput>()`, `query SearchUsersQuery` must line up with `req.query<SearchUsersQuery>()`, `headers AuthHeaders` must line up with `req.headers<AuthHeaders>()`, `cookies SessionCookies` must line up with `req.cookies<SessionCookies>()`, `returns User status 201` must line up with the success response where the compiler can infer it, and `{id: UserId}` must line up with `ctx.param<UserId>("id")`.
+The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, headers contracts, cookies contracts, response contracts, status contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with a handler param such as `input: CreateUserInput`, `query SearchUsersQuery` must line up with `query: SearchUsersQuery`, `headers AuthHeaders` must line up with `headers: AuthHeaders`, `cookies SessionCookies` must line up with `cookies: SessionCookies`, `returns User status 201` must line up with the success response where the compiler can infer it, and `{id: UserId}` must line up with `id: UserId`. Lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, and `ctx.param<T>()` remain available as compatibility escape hatches.
 
 ## v0 Keywords
 

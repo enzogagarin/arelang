@@ -69,6 +69,7 @@ Output:
 - route query contract checks: done
 - route headers contract checks: done
 - route cookies contract checks: done
+- route contract handler parameter binding: done
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
 - model database call checks for `ctx.db.<collection>.insert/get`: started
@@ -78,7 +79,7 @@ Output:
 Definition of done:
 
 - invalid field names, unknown symbols, bad return types, and unhandled `Result` values are reported with stable diagnostic codes
-- `users_api` route handlers must use `(ctx: Http.Context<AppState>, req: Http.Request)` and may return route payloads such as `User` or `Result<User, ApiError>`
+- `users_api` route handlers may bind route inputs directly as typed parameters such as `input: CreateUserInput`, `id: UserId`, and `cookies: SessionCookies`
 
 ## Milestone 3: Interpreter Core
 
@@ -113,6 +114,7 @@ Output:
 - route query contracts: done for `query Payload`
 - route headers contracts: done for `headers Payload`
 - route cookies contracts: done for `cookies Payload`
+- route contract parameter binding: done for body, query, headers, cookies, and typed path params
 - route response contracts: done for `returns Payload status N`
 - domain payload handlers: done for `Payload` and `Result<Payload, E>`
 - API error mapping: done through `Http.error_map`

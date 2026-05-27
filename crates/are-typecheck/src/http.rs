@@ -1,7 +1,7 @@
 use super::{TypeChecker, is_identifier, path_is, path_name, same_type, type_name};
 use crate::body::{BodyType, HttpResponseUse};
 use are_ast::{
-    CallArg, Expr, FunctionBody, FunctionDecl, Path, RouteDecl, ServiceDecl, Stmt, TypeExpr,
+    CallArg, Expr, FunctionBody, FunctionDecl, Param, Path, RouteDecl, ServiceDecl, Stmt, TypeExpr,
 };
 use are_diagnostics::{Diagnostic, SourceRange};
 use std::collections::HashMap;
@@ -30,7 +30,9 @@ impl TypeChecker<'_> {
 
             self.check_route_io_contract(route, handler, &path_params);
             self.check_route_handler_response_contract(route, handler);
-            if let Some(error_type) = self.check_route_handler(route, handler, state_type) {
+            if let Some(error_type) =
+                self.check_route_handler(route, handler, state_type, &path_params)
+            {
                 result_error_types.push(error_type);
             }
         }
@@ -242,12 +244,50 @@ impl TypeChecker<'_> {
         handler: &FunctionDecl,
         path_params: &[RoutePathParam],
     ) {
-        let uses = collect_handler_io_uses(handler);
+        let mut uses = collect_handler_io_uses(handler);
+        self.collect_handler_param_bindings(route, handler, path_params, &mut uses);
         self.check_route_path_param_contract(route, handler, path_params, &uses);
         self.check_route_body_decode_contract(route, handler, &uses);
         self.check_route_query_decode_contract(route, handler, &uses);
         self.check_route_headers_decode_contract(route, handler, &uses);
         self.check_route_cookies_decode_contract(route, handler, &uses);
+    }
+
+    fn collect_handler_param_bindings(
+        &self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+        uses: &mut HandlerIoUses,
+    ) {
+        for param in handler.params.iter().skip(1) {
+            match self.handler_param_source(route, path_params, param) {
+                HandlerParamSource::Path(name) => uses.path_params.push(PathParamUse {
+                    name: Some(name),
+                    ty: Some(type_name(&param.ty)),
+                    range: param.range,
+                }),
+                HandlerParamSource::Body => uses.request_bodies.push(RequestBodyUse {
+                    ty: Some(type_name(&param.ty)),
+                    range: param.range,
+                }),
+                HandlerParamSource::Query => uses.request_queries.push(RequestQueryUse {
+                    ty: Some(type_name(&param.ty)),
+                    range: param.range,
+                }),
+                HandlerParamSource::Headers => uses.request_headers.push(RequestHeadersUse {
+                    ty: Some(type_name(&param.ty)),
+                    range: param.range,
+                }),
+                HandlerParamSource::Cookies => uses.request_cookies.push(RequestCookiesUse {
+                    ty: Some(type_name(&param.ty)),
+                    range: param.range,
+                }),
+                HandlerParamSource::Request
+                | HandlerParamSource::Unknown
+                | HandlerParamSource::Ambiguous(_) => {}
+            }
+        }
     }
 
     fn check_route_path_param_contract(
@@ -683,17 +723,18 @@ impl TypeChecker<'_> {
         route: &RouteDecl,
         handler: &FunctionDecl,
         state_type: &TypeExpr,
+        path_params: &[RoutePathParam],
     ) -> Option<TypeExpr> {
-        if handler.params.len() != 2 {
+        if handler.params.is_empty() {
             self.diagnostics.push(Diagnostic::error(
                 "E_HTTP_0201",
                 &self.file,
                 handler.range,
                 format!(
-                    "route handler `{}` must accept exactly 2 parameters",
+                    "route handler `{}` must accept at least one parameter",
                     handler.name
                 ),
-                "HTTP handlers use `(ctx: Http.Context<AppState>, req: Http.Request)`",
+                "HTTP handlers start with `ctx: Http.Context<AppState>` and may then bind route contracts such as `input: CreateUserInput`",
             ));
             return None;
         }
@@ -713,19 +754,7 @@ impl TypeChecker<'_> {
             ));
         }
 
-        let req = &handler.params[1];
-        if !self.is_http_path(&req.ty, "Request") {
-            self.diagnostics.push(Diagnostic::error(
-                "E_HTTP_0203",
-                &self.file,
-                req.ty.range(),
-                format!(
-                    "second parameter of `{}` must be Http.Request",
-                    handler.name
-                ),
-                "route handlers receive the incoming request as the second parameter",
-            ));
-        }
+        self.check_route_handler_params(route, handler, path_params);
 
         let Some(return_type) = &handler.return_type else {
             self.diagnostics.push(Diagnostic::error(
@@ -773,6 +802,169 @@ impl TypeChecker<'_> {
         None
     }
 
+    fn check_route_handler_params(
+        &mut self,
+        route: &RouteDecl,
+        handler: &FunctionDecl,
+        path_params: &[RoutePathParam],
+    ) {
+        let mut bound_inputs = HashMap::new();
+        let mut raw_request_count = 0usize;
+
+        for param in handler.params.iter().skip(1) {
+            match self.handler_param_source(route, path_params, param) {
+                HandlerParamSource::Request => {
+                    raw_request_count += 1;
+                    if raw_request_count > 1 {
+                        self.diagnostics.push(Diagnostic::error(
+                            "E_HTTP_0206",
+                            &self.file,
+                            param.range,
+                            format!(
+                                "handler `{}` binds Http.Request more than once",
+                                handler.name
+                            ),
+                            "keep a single raw request parameter, or prefer typed route contract parameters",
+                        ));
+                    }
+                }
+                HandlerParamSource::Path(name) => {
+                    let source = format!("path `{name}`");
+                    self.check_duplicate_handler_binding(
+                        &mut bound_inputs,
+                        param,
+                        handler,
+                        &source,
+                    );
+                }
+                HandlerParamSource::Body => {
+                    self.check_duplicate_handler_binding(&mut bound_inputs, param, handler, "body");
+                }
+                HandlerParamSource::Query => {
+                    self.check_duplicate_handler_binding(
+                        &mut bound_inputs,
+                        param,
+                        handler,
+                        "query",
+                    );
+                }
+                HandlerParamSource::Headers => self.check_duplicate_handler_binding(
+                    &mut bound_inputs,
+                    param,
+                    handler,
+                    "headers",
+                ),
+                HandlerParamSource::Cookies => self.check_duplicate_handler_binding(
+                    &mut bound_inputs,
+                    param,
+                    handler,
+                    "cookies",
+                ),
+                HandlerParamSource::Ambiguous(matches) => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0205",
+                        &self.file,
+                        param.ty.range(),
+                        format!(
+                            "handler parameter `{}` matches multiple route contracts: {}",
+                            param.name,
+                            matches.join(", ")
+                        ),
+                        "use distinct payload types for route input contracts before binding them as handler parameters",
+                    ));
+                }
+                HandlerParamSource::Unknown => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "E_HTTP_0205",
+                        &self.file,
+                        param.ty.range(),
+                        format!(
+                            "handler parameter `{}` is not part of route `{}`",
+                            param.name, route.path
+                        ),
+                        "bind a typed path/body/query/headers/cookies contract, or use `req: Http.Request` for raw request access",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn check_duplicate_handler_binding(
+        &mut self,
+        bound_inputs: &mut HashMap<String, SourceRange>,
+        param: &Param,
+        handler: &FunctionDecl,
+        source: &str,
+    ) {
+        if let Some(previous) = bound_inputs.insert(source.to_string(), param.range) {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0206",
+                &self.file,
+                param.range,
+                format!(
+                    "handler `{}` binds route input `{source}` more than once",
+                    handler.name
+                ),
+                format!(
+                    "the first binding for `{source}` starts at line {}",
+                    previous.start.line
+                ),
+            ));
+        }
+    }
+
+    fn handler_param_source(
+        &self,
+        route: &RouteDecl,
+        path_params: &[RoutePathParam],
+        param: &Param,
+    ) -> HandlerParamSource {
+        if self.is_http_path(&param.ty, "Request") {
+            return HandlerParamSource::Request;
+        }
+
+        if path_params
+            .iter()
+            .any(|path_param| path_param.name == param.name)
+        {
+            return HandlerParamSource::Path(param.name.clone());
+        }
+
+        let mut matches = Vec::new();
+        if let Some(body_type) = &route.body_type
+            && same_type(&param.ty, body_type)
+        {
+            matches.push(HandlerParamSource::Body);
+        }
+        if let Some(query_type) = &route.query_type
+            && same_type(&param.ty, query_type)
+        {
+            matches.push(HandlerParamSource::Query);
+        }
+        if let Some(headers_type) = &route.headers_type
+            && same_type(&param.ty, headers_type)
+        {
+            matches.push(HandlerParamSource::Headers);
+        }
+        if let Some(cookies_type) = &route.cookies_type
+            && same_type(&param.ty, cookies_type)
+        {
+            matches.push(HandlerParamSource::Cookies);
+        }
+
+        match matches.as_slice() {
+            [] => HandlerParamSource::Unknown,
+            [source] => source.clone(),
+            _ => HandlerParamSource::Ambiguous(
+                matches
+                    .iter()
+                    .map(HandlerParamSource::label)
+                    .map(str::to_string)
+                    .collect(),
+            ),
+        }
+    }
+
     fn check_error_mapping(&mut self, decl: &ServiceDecl, result_error_types: &[TypeExpr]) {
         let Some(first_error) = result_error_types.first() else {
             return;
@@ -797,7 +989,7 @@ impl TypeChecker<'_> {
                 &self.file,
                 decl.range,
                 format!("service `{}` needs an HTTP error mapper", decl.name),
-                "routes returning Result<Http.Response, E> require `use Http.error_map(map_error)`",
+                "routes returning Result<Payload, E> require `use Http.error_map(map_error)`",
             ));
             return;
         }
@@ -943,6 +1135,32 @@ enum RouteSegmentParam {
     None,
     Param(RoutePathParam),
     Malformed(&'static str),
+}
+
+#[derive(Debug, Clone)]
+enum HandlerParamSource {
+    Request,
+    Path(String),
+    Body,
+    Query,
+    Headers,
+    Cookies,
+    Ambiguous(Vec<String>),
+    Unknown,
+}
+
+impl HandlerParamSource {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Path(_) => "path",
+            Self::Body => "body",
+            Self::Query => "query",
+            Self::Headers => "headers",
+            Self::Cookies => "cookies",
+            Self::Ambiguous(_) | Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

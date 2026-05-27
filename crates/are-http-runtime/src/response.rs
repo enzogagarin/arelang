@@ -3,8 +3,9 @@ use crate::functions::RuntimeFunctions;
 use crate::host::RuntimeHost;
 use crate::request::RuntimeRequest;
 use crate::store::RuntimeState;
+use are_ast::{FunctionDecl, Param, TypeExpr};
 use are_interpreter::{
-    Value as InterpretedValue, interpret_function_with_host_and_args,
+    Host, InterpretError, Value as InterpretedValue, interpret_function_with_host_and_args,
     interpret_function_with_host_and_functions,
 };
 use std::collections::HashMap;
@@ -110,7 +111,15 @@ fn interpreted_response(
         schemas: &functions.schemas,
     };
 
-    match interpret_function_with_host_and_functions(function, &functions.functions, &mut host) {
+    let result = handler_args(function, route, request, &mut host).and_then(|args| {
+        if args.is_empty() {
+            interpret_function_with_host_and_functions(function, &functions.functions, &mut host)
+        } else {
+            interpret_function_with_host_and_args(function, &functions.functions, &mut host, args)
+        }
+    });
+
+    match result {
         Ok(InterpretedValue::HttpResponse(response)) => RuntimeResponse {
             status: response.status,
             body: response.body,
@@ -141,6 +150,81 @@ fn interpreted_response(
             error_response(500, "interpreter_error")
         }
     }
+}
+
+fn handler_args(
+    function: &FunctionDecl,
+    route: &HttpRouteContract,
+    request: &HandlerRequest<'_>,
+    host: &mut RuntimeHost<'_>,
+) -> Result<Vec<InterpretedValue>, InterpretError> {
+    if function.params.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    function
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| handler_arg(index, param, route, request, host))
+        .collect()
+}
+
+fn handler_arg(
+    index: usize,
+    param: &Param,
+    route: &HttpRouteContract,
+    request: &HandlerRequest<'_>,
+    host: &mut RuntimeHost<'_>,
+) -> Result<InterpretedValue, InterpretError> {
+    if index == 0 || is_http_request_type(&param.ty) {
+        return Ok(InterpretedValue::Unit);
+    }
+
+    let param_type = type_expr_name(&param.ty);
+    if request.params.contains_key(&param.name) {
+        return host
+            .read_path_param(Some(&param_type), &param.name)
+            .map(InterpretedValue::Json);
+    }
+
+    if route.body_type.as_deref() == Some(param_type.as_str()) {
+        return host
+            .read_json_body(Some(&param_type))
+            .map(InterpretedValue::Json);
+    }
+
+    if route.query_type.as_deref() == Some(param_type.as_str()) {
+        return host
+            .read_query_params(Some(&param_type))
+            .map(InterpretedValue::Json);
+    }
+
+    if route.headers_type.as_deref() == Some(param_type.as_str()) {
+        return host
+            .read_headers(Some(&param_type))
+            .map(InterpretedValue::Json);
+    }
+
+    if route.cookies_type.as_deref() == Some(param_type.as_str()) {
+        return host
+            .read_cookies(Some(&param_type))
+            .map(InterpretedValue::Json);
+    }
+
+    Err(InterpretError::UnsupportedExpression(format!(
+        "handler parameter `{}`",
+        param.name
+    )))
+}
+
+fn is_http_request_type(ty: &TypeExpr) -> bool {
+    matches!(
+        ty,
+        TypeExpr::Path { path }
+            if path.segments.len() == 2
+                && path.segments.get(1).is_some_and(|segment| segment == "Request")
+    )
 }
 
 fn mapped_error_response(
@@ -180,6 +264,17 @@ fn mapped_error_response(
             eprintln!("Arelang error mapper `{mapper_name}` failed: {err}");
             error_response(500, "error_mapper_failed")
         }
+    }
+}
+
+fn type_expr_name(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Path { path } => path.segments.join("."),
+        TypeExpr::Generic { base, args, .. } => {
+            let args = args.iter().map(type_expr_name).collect::<Vec<_>>();
+            format!("{}<{}>", base.segments.join("."), args.join(", "))
+        }
+        TypeExpr::Option { inner, .. } => format!("{}?", type_expr_name(inner)),
     }
 }
 

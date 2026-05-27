@@ -39,20 +39,21 @@ Current implementation status:
 
 ## Handler Shape
 
-Handlers receive a typed context and request.
+Handlers receive a typed context plus the route inputs they need.
 
 ```are
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError>
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError>
+fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError>
 ```
 
 The preferred handler style returns domain payloads and lets the route contract carry HTTP status:
 
 ```are
-fn health(ctx: Http.Context<AppState>, req: Http.Request) -> HealthResponse
-fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<User, ApiError>
+fn health(ctx: Http.Context<AppState>) -> HealthResponse
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError>
 ```
 
-The compatibility style still accepts explicit HTTP responses:
+The compatibility style still accepts the raw request and explicit HTTP responses:
 
 ```are
 fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response
@@ -96,11 +97,11 @@ The compiler should check:
 - handler has a valid HTTP signature
 - handler returns `Http.Response`, `Result<Http.Response, E>`, the declared `returns` payload, or `Result<Payload, E>`
 - result-returning handlers have a compatible `Http.error_map`
-- typed route params such as `{id: UserId}` are read through matching `ctx.param<UserId>("id")`
-- body contracts such as `body CreateUserInput` are decoded through matching `req.json<CreateUserInput>()`
-- query contracts such as `query SearchUsersQuery` are decoded through matching `req.query<SearchUsersQuery>()`
-- headers contracts such as `headers AuthHeaders` are decoded through matching `req.headers<AuthHeaders>()`
-- cookies contracts such as `cookies SessionCookies` are decoded through matching `req.cookies<SessionCookies>()`
+- typed route params such as `{id: UserId}` are bound through matching handler params such as `id: UserId`
+- body contracts such as `body CreateUserInput` are bound through matching handler params such as `input: CreateUserInput`
+- query contracts such as `query SearchUsersQuery` are bound through matching handler params such as `query: SearchUsersQuery`
+- headers contracts such as `headers AuthHeaders` are bound through matching handler params such as `headers: AuthHeaders`
+- cookies contracts such as `cookies SessionCookies` are bound through matching handler params such as `cookies: SessionCookies`
 - response contracts such as `returns User` name a known JSON payload type and match handler domain return types
 - status contracts such as `status 201` use valid HTTP status codes and match explicit success response constructors when a handler still returns `Http.Response`
 - model database calls such as `ctx.db.users.insert(input)` resolve `users` from `model User`
@@ -121,7 +122,14 @@ Http.Response.error(status, value)
 
 ## JSON
 
-v0 should support typed decode and encode for structs with primitive fields.
+v0 should support typed route binding plus typed decode and encode for structs with primitive fields.
+
+```are
+fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError>
+fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<SearchUsersResponse, ApiError>
+```
+
+The lower-level request decode calls remain available for compatibility:
 
 ```are
 let input = req.json<CreateUserInput>()?

@@ -607,7 +607,7 @@ fn expect_enum(value: Value, context: &str) -> Result<EnumValue, InterpretError>
 mod tests {
     use super::{
         EnumValue, Host, HttpResponseValue, InterpretError, Value, interpret_function,
-        interpret_function_with_host_and_args, interpret_function_with_host_and_functions,
+        interpret_function_with_host_and_args,
     };
     use are_ast::{FunctionDecl, Item};
     use are_lexer::lex_source;
@@ -734,7 +734,30 @@ mod tests {
     ) -> Result<Value, InterpretError> {
         let functions = users_api_functions();
         let function = functions.get(name).expect("function exists");
-        interpret_function_with_host_and_functions(function, &functions, host)
+        let args = users_api_function_args(name, host);
+        interpret_function_with_host_and_args(function, &functions, host, args)
+    }
+
+    fn users_api_function_args(name: &str, host: &TestHost) -> Vec<Value> {
+        match name {
+            "create_user" => vec![
+                Value::Unit,
+                Value::Json(
+                    serde_json::from_str(&host.request_body).expect("request body json decodes"),
+                ),
+            ],
+            "get_user" => vec![
+                Value::Unit,
+                Value::Json(serde_json::Value::from(
+                    host.path_params
+                        .get("id")
+                        .expect("id path param")
+                        .parse::<u64>()
+                        .expect("id path param is u64"),
+                )),
+            ],
+            _ => Vec::new(),
+        }
     }
 
     fn map_users_api_error(error: EnumValue, host: &mut TestHost) -> HttpResponseValue {

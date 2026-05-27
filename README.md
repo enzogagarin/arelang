@@ -6,6 +6,16 @@ Arelang is a small backend-first programming language for AI-assisted service ge
 
 The first product goal is not a complete general-purpose language. The first goal is a working HTTP server version that can run a small `users_api` service with typed request/response models, clear errors, and a deterministic compiler feedback loop.
 
+## HTTP MVP Status
+
+The HTTP MVP is complete. The current closure gate is:
+
+```sh
+./scripts/mvp-smoke.sh
+```
+
+That gate verifies the Rust workspace, Arelang static checks, formatter, contract inspection, OpenAPI export and drift checks, audit checks, built-in scenario tests, generated projects, and real local HTTP requests. The remaining roadmap is post-MVP work: stronger language identity, richer domain syntax, production safety, persistence, packaging, and eventually native codegen.
+
 ## Initial Direction
 
 - File extension: `.are`

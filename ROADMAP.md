@@ -1,10 +1,18 @@
 # Arelang MVP Roadmap
 
+## HTTP MVP Status
+
+Status: complete as of 2026-05-27.
+
+The HTTP MVP is closed when `scripts/mvp-smoke.sh` passes. That gate covers Rust formatting, Rust tests, clippy, Arelang formatting, `are check`, `are inspect`, `are openapi` export and drift checks, `are audit`, `are test`, generated minimal and users-template projects, and real HTTP smoke requests against local servers.
+
+The next roadmap phase starts after the MVP and should focus on language identity, domain primitives, richer backend syntax, production safety, persistence, and packaging.
+
 ## North Star
 
 Build the smallest Arelang implementation that can run a real HTTP `users_api` service.
 
-The first version may interpret Arelang instead of compiling to native code. The important part is that the language surface, diagnostics, and backend flow feel like the intended product.
+The first version interprets Arelang instead of compiling to native code. The important part is that the language surface, diagnostics, and backend flow feel like the intended product.
 
 ## Milestone 0: Planning And Spec Seed
 
@@ -30,7 +38,7 @@ Output:
 - AST model: done
 - parser tests for `users_api`: done
 - top-level resolver: done
-- parser recovery for common syntax errors: started
+- parser recovery for common syntax errors: done for MVP diagnostics; broader recovery deferred
 - parser support/test module split: done
 
 Initial language items:
@@ -57,9 +65,9 @@ Definition of done:
 
 Output:
 
-- module/import resolution: started
-- nominal struct and enum declaration checks: started
-- function signature checks: started
+- module/import resolution: done for MVP builtins and single-package sources; full package imports deferred
+- nominal struct and enum declaration checks: done for MVP declarations
+- function signature checks: done for MVP handler and local-call signatures
 - `Result<T, E>` arity checks: done
 - `Option<T>` arity checks: done
 - HTTP route handler signature checks: done
@@ -73,7 +81,7 @@ Output:
 - declarative struct field validation checks for `validate.email` and `validate.length`: done
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
-- model database call checks for `ctx.db.<collection>.insert/get`: started
+- model database call checks for `ctx.db.<collection>.insert/get`: done for MVP model collections; broader query APIs deferred
 - typed path parameter contract checks: done
 - function body checker module split: done
 
@@ -86,11 +94,11 @@ Definition of done:
 
 Output:
 
-- expression interpreter: started
+- expression interpreter: done for the MVP function slice
 - function calls: done for the MVP function slice
-- structs/enums at runtime: started
+- structs/enums at runtime: done for MVP JSON payloads, errors, and enum constructors
 - in-memory values: done for JSON, booleans, HTTP responses, enums, and unit
-- basic standard library hooks: started
+- basic standard library hooks: done for MVP HTTP, validation, and model-store flows
 - interpreter value/error/host module split: done
 
 Definition of done:
@@ -160,7 +168,7 @@ Definition of done:
 
 ## Milestone 6: Safety And Production Shape
 
-Status: started.
+Status: post-MVP started.
 
 Output:
 

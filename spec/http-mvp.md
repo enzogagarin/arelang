@@ -1,6 +1,6 @@
 # HTTP MVP Spec
 
-The first Arelang version must run a real HTTP server.
+The first Arelang HTTP MVP runs a real HTTP server. This spec records the completed MVP surface and the boundaries that remain intentionally post-MVP.
 
 ## Goal
 
@@ -22,7 +22,7 @@ Expected result:
 - uses JSON request and response bodies
 - returns structured API errors
 
-Current implementation status:
+Current implementation status: complete for the HTTP MVP.
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations

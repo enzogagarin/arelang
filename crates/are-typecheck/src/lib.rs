@@ -107,6 +107,18 @@ impl<'a> TypeChecker<'a> {
                 );
             }
 
+            if let Some(status) = variant.status
+                && !(100..=599).contains(&status.value)
+            {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_TYPE_0013",
+                    &self.file,
+                    status.range,
+                    format!("invalid HTTP status code `{}`", status.value),
+                    "enum variant status metadata must use an integer status code from 100 to 599",
+                ));
+            }
+
             self.check_duplicate_fields(&variant.payload, DuplicateScope::EnumPayload);
         }
     }

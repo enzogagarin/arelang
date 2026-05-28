@@ -104,6 +104,7 @@ pub struct EnumDecl {
 pub struct EnumVariant {
     pub name: String,
     pub payload: Vec<Field>,
+    pub status: Option<RouteStatus>,
     pub range: SourceRange,
 }
 

@@ -1,7 +1,7 @@
 use crate::{RuntimeError, schemas::type_expr_is_optional};
 use are_ast::{
-    EnumDecl, Field, FieldValidation, Item, ModelDecl, ModelField, ModelFieldAttr, Module,
-    RouteDecl, ServiceDecl, StructDecl, TypeDecl, TypeExpr,
+    EnumDecl, Field, FieldValidation, FunctionDecl, Item, ModelDecl, ModelField, ModelFieldAttr,
+    Module, RouteDecl, ServiceDecl, StructDecl, TypeDecl, TypeExpr,
 };
 use are_project::CheckedFile;
 use are_semantics::collection_name_for_model;
@@ -15,6 +15,7 @@ pub struct HttpContractManifest {
     pub routes: Vec<HttpRouteContract>,
     pub schemas: HttpSchemaManifest,
     pub error_mapper: Option<String>,
+    pub error_contract: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +28,7 @@ pub struct HttpRouteContract {
     pub cookies_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
+    pub error_type: Option<String>,
     pub path_params: Vec<HttpPathParam>,
     pub handler: String,
 }
@@ -100,6 +102,7 @@ pub struct HttpEnumSchema {
 pub struct HttpEnumVariantSchema {
     pub name: String,
     pub payload: Vec<HttpFieldSchema>,
+    pub status: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +115,7 @@ pub struct TestRoute {
     pub cookies_type: Option<String>,
     pub response_type: Option<String>,
     pub status: Option<u16>,
+    pub error_type: Option<String>,
     pub path_params: Vec<TestPathParam>,
     pub handler: String,
 }
@@ -126,6 +130,7 @@ impl HttpContractManifest {
     pub(crate) fn from_service(service: &ServiceDecl) -> Result<Self, RuntimeError> {
         let routes = service.routes.iter().map(runtime_route).collect::<Vec<_>>();
         let error_mapper = runtime_error_mapper(service);
+        let error_contract = runtime_error_contract(service);
 
         if routes.is_empty() {
             return Err(RuntimeError::UnsupportedProject(format!(
@@ -139,6 +144,7 @@ impl HttpContractManifest {
             routes,
             schemas: HttpSchemaManifest::default(),
             error_mapper,
+            error_contract,
         })
     }
 
@@ -147,6 +153,7 @@ impl HttpContractManifest {
         modules: &[CheckedFile],
     ) -> Result<Self, RuntimeError> {
         let mut manifest = Self::from_service(service)?;
+        attach_route_error_types(&mut manifest.routes, modules);
         manifest.schemas = HttpSchemaManifest::from_modules(modules);
         Ok(manifest)
     }
@@ -183,6 +190,7 @@ impl HttpContractManifest {
                 cookies_type: route.cookies_type.clone(),
                 response_type: route.response_type.clone(),
                 status: route.status,
+                error_type: route.error_type.clone(),
                 path_params: route
                     .path_params
                     .iter()
@@ -326,6 +334,7 @@ fn runtime_route(route: &RouteDecl) -> HttpRouteContract {
         cookies_type: route.cookies_type.as_ref().map(type_expr_name),
         response_type: route.response_type.as_ref().map(type_expr_name),
         status: route.status.map(|status| status.value),
+        error_type: None,
         path_params: path_params_from_path(&route.path),
         handler: route.handler.segments.join("."),
     }
@@ -344,6 +353,53 @@ fn runtime_error_mapper(service: &ServiceDecl) -> Option<String> {
 
         service_use.args.first().map(|path| path.segments.join("."))
     })
+}
+
+fn runtime_error_contract(service: &ServiceDecl) -> Option<String> {
+    service.uses.iter().find_map(|service_use| {
+        let is_errors = service_use
+            .target
+            .segments
+            .last()
+            .is_some_and(|segment| segment == "errors");
+        if !is_errors {
+            return None;
+        }
+
+        service_use.args.first().map(|path| path.segments.join("."))
+    })
+}
+
+fn attach_route_error_types(routes: &mut [HttpRouteContract], modules: &[CheckedFile]) {
+    let functions = modules
+        .iter()
+        .flat_map(|file| file.module.items.iter())
+        .filter_map(|item| {
+            if let Item::Function(function) = item {
+                Some((function.name.as_str(), function))
+            } else {
+                None
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    for route in routes {
+        route.error_type = functions
+            .get(route.handler.as_str())
+            .and_then(|function| function_error_type(function));
+    }
+}
+
+fn function_error_type(function: &FunctionDecl) -> Option<String> {
+    let TypeExpr::Generic { base, args, .. } = function.return_type.as_ref()? else {
+        return None;
+    };
+
+    if base.segments.len() == 1 && base.segments[0] == "Result" && args.len() == 2 {
+        return Some(type_expr_name(&args[1]));
+    }
+
+    None
 }
 
 fn alias_schema(decl: &TypeDecl) -> HttpAliasSchema {
@@ -383,6 +439,7 @@ fn enum_schema(decl: &EnumDecl) -> HttpEnumSchema {
             .map(|variant| HttpEnumVariantSchema {
                 name: variant.name.clone(),
                 payload: variant.payload.iter().map(field_schema).collect(),
+                status: variant.status.map(|status| status.value),
             })
             .collect(),
     }

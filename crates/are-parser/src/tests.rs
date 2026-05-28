@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 26);
+    assert_eq!(module.items.len(), 25);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -51,14 +51,20 @@ fn parses_users_api_shape() {
     assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
     assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
 
-    let map_error = function_named(&module, "map_error");
-    let FunctionBody::Parsed { block } = &map_error.body else {
-        panic!("map_error body should parse into a match statement");
-    };
-    assert!(matches!(
-        block.statements.first(),
-        Some(Stmt::Match { arms, .. }) if arms.len() == 3
-    ));
+    let api_error = module
+        .items
+        .iter()
+        .find_map(|item| {
+            if let Item::Enum(decl) = item {
+                (decl.name == "ApiError").then_some(decl)
+            } else {
+                None
+            }
+        })
+        .expect("ApiError enum parses");
+    assert_eq!(api_error.variants[0].status.expect("status").value, 400);
+    assert_eq!(api_error.variants[1].status.expect("status").value, 404);
+    assert_eq!(api_error.variants[2].status.expect("status").value, 500);
 }
 
 #[test]

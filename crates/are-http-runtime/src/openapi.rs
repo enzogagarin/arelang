@@ -1,11 +1,12 @@
 use crate::contracts::{
-    HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpFieldSchema,
+    HttpAliasSchema, HttpContractManifest, HttpEnumSchema, HttpEnumVariantSchema, HttpFieldSchema,
     HttpFieldValidationSchema, HttpModelFieldSchema, HttpModelSchema, HttpRouteContract,
     HttpSchemaManifest, HttpStructSchema,
 };
 use crate::schemas::{cookie_name_for_field, header_name_for_field};
 use are_project::Manifest;
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 pub(crate) fn openapi_document(manifest: &Manifest, contracts: &HttpContractManifest) -> Value {
     let mut document = Map::new();
@@ -88,7 +89,7 @@ fn operation(route: &HttpRouteContract, contracts: &HttpContractManifest) -> Val
         );
     }
 
-    operation.insert("responses".to_string(), responses(route));
+    operation.insert("responses".to_string(), responses(route, contracts));
     Value::Object(operation)
 }
 
@@ -181,7 +182,7 @@ fn field_parameter(
     })
 }
 
-fn responses(route: &HttpRouteContract) -> Value {
+fn responses(route: &HttpRouteContract, contracts: &HttpContractManifest) -> Value {
     let status = route.status.unwrap_or(200).to_string();
     let schema = route
         .response_type
@@ -200,7 +201,94 @@ fn responses(route: &HttpRouteContract) -> Value {
             },
         }),
     );
+
+    add_error_responses(route, contracts, &mut responses);
     Value::Object(responses)
+}
+
+fn add_error_responses(
+    route: &HttpRouteContract,
+    contracts: &HttpContractManifest,
+    responses: &mut Map<String, Value>,
+) {
+    let Some(error_contract) = &contracts.error_contract else {
+        return;
+    };
+    if route.error_type.as_deref() != Some(error_contract.as_str()) {
+        return;
+    }
+
+    let Some(error_schema) = contracts
+        .schemas
+        .enums
+        .iter()
+        .find(|schema| schema.name == *error_contract)
+    else {
+        return;
+    };
+
+    let mut by_status = BTreeMap::<u16, Vec<&HttpEnumVariantSchema>>::new();
+    for variant in &error_schema.variants {
+        if let Some(status) = variant.status {
+            by_status.entry(status).or_default().push(variant);
+        }
+    }
+
+    for (status, variants) in by_status {
+        responses.entry(status.to_string()).or_insert_with(|| {
+            let schema = if variants.len() == 1 {
+                error_variant_body_schema(variants[0])
+            } else {
+                json!({
+                    "oneOf": variants
+                        .iter()
+                        .map(|variant| error_variant_body_schema(variant))
+                        .collect::<Vec<_>>(),
+                })
+            };
+
+            json!({
+                "description": format!("{error_contract} error"),
+                "content": {
+                    "application/json": {
+                        "schema": schema,
+                    },
+                },
+            })
+        });
+    }
+}
+
+fn error_variant_body_schema(variant: &HttpEnumVariantSchema) -> Value {
+    let mut properties = Map::new();
+    let mut required = vec![Value::String("error".to_string())];
+
+    if variant.payload.is_empty() {
+        properties.insert(
+            "error".to_string(),
+            json!({
+                "type": "string",
+                "const": error_code(&variant.name),
+            }),
+        );
+    } else if variant.payload.len() == 1
+        && matches!(variant.payload[0].name.as_str(), "message" | "error")
+    {
+        properties.insert("error".to_string(), type_schema(&variant.payload[0].ty));
+    } else {
+        properties.insert("error".to_string(), string_schema());
+        for field in &variant.payload {
+            required.push(Value::String(field.name.clone()));
+            properties.insert(field.name.clone(), type_schema(&field.ty));
+        }
+    }
+
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": properties,
+        "required": required,
+    })
 }
 
 fn component_schemas(schemas: &HttpSchemaManifest) -> Value {
@@ -251,7 +339,11 @@ fn enum_component(schema: &HttpEnumSchema) -> Value {
             .map(|variant| {
                 let mut fields = vec![enum_tag_field(&variant.name)];
                 fields.extend(variant.payload.iter().map(FieldLike::Struct));
-                object_component(fields)
+                let mut component = object_component(fields);
+                if let Some(status) = variant.status {
+                    insert_extension(&mut component, "x-are-status", Value::from(status));
+                }
+                component
             })
             .collect::<Vec<_>>(),
     })
@@ -387,6 +479,21 @@ fn openapi_path_segment(segment: &str) -> String {
     };
     let name = inner.split_once(':').map_or(inner, |(name, _)| name).trim();
     format!("{{{name}}}")
+}
+
+fn error_code(variant_name: &str) -> String {
+    let mut output = String::new();
+    for (index, ch) in variant_name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                output.push('_');
+            }
+            output.push(ch.to_ascii_lowercase());
+        } else {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 fn insert_extension(schema: &mut Value, key: &str, value: Value) {

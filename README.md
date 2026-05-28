@@ -23,7 +23,7 @@ That gate verifies the Rust workspace, Arelang static checks, formatter, contrac
 - Bootstrap implementation: Rust compiler/runtime
 - First execution model: interpreter-first, with an embedded HTTP runtime
 - First demo: `examples/users_api`
-- Error model: `Result<T, E>` plus `?` propagation
+- Error model: `Result<T, E>` plus `?` propagation and declarative HTTP error contracts
 - Absence model: `Option<T>`
 - Syntax style: braces, no semicolons, mandatory formatter
 - Backend target: HTTP server before native codegen
@@ -124,11 +124,11 @@ When a server starts, `are run` prints the service name, package, listen URL, an
 
 `are test` runs the project quality loop without opening a TCP listener. It reuses the same static check and HTTP runtime preparation as `are run`, then executes built-in MVP scenarios for known backend shapes such as `GET /ping` and the users API flow. `--json` emits a machine-readable test report.
 
-The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, query type, headers type, cookies type, response type, success status, handler binding, local type/model/enum schemas, domain alias validations, field validations, and error mapper. `are run` uses it to route and validate requests/responses; `are test --json` exposes the same route contract data for tools.
+The HTTP runtime now prepares a checked contract manifest before serving requests. That manifest is the single runtime view of the service name, method/path pairs, typed path params, request body type, query type, headers type, cookies type, response type, success status, route error type, handler binding, local type/model/enum schemas, domain alias validations, field validations, declarative error contract, and optional compatibility error mapper. `are run` uses it to route and validate requests/responses; `are test --json` exposes the same route contract data for tools.
 
-`are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface, including aliases, alias validation metadata, structs, field validation metadata, models, enum variants, model collections, and primary/unique model field metadata. This is the seed for OpenAPI/client generation and lets Arelang expose backend contracts without making users read the runtime internals.
+`are inspect` prints the same checked HTTP contract manifest without running a server or executing built-in scenarios. `--json` emits the manifest directly for tools that need the API surface, including aliases, alias validation metadata, structs, field validation metadata, models, enum variants, enum HTTP statuses, route error types, model collections, and primary/unique model field metadata. This is the seed for OpenAPI/client generation and lets Arelang expose backend contracts without making users read the runtime internals.
 
-`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params plus typed query/header/cookie contracts to OpenAPI parameters, alias and field validations to schema constraints such as `format: email`, `minLength`, and `maxLength`, and Arelang aliases, structs, models, and enums to `components.schemas`. By default it prints to stdout; `--output openapi.json` writes a stable file, and `--check` fails when that file has drifted from the current Arelang source. Without `--output`, `--check` looks for `openapi.json` in the project root.
+`are openapi` exports the checked HTTP contract as OpenAPI 3.1 JSON. It maps service routes to `paths`, body/response contracts to request and response schemas, typed path params plus typed query/header/cookie contracts to OpenAPI parameters, declarative error contracts to error responses, alias and field validations to schema constraints such as `format: email`, `minLength`, and `maxLength`, and Arelang aliases, structs, models, and enums to `components.schemas`. By default it prints to stdout; `--output openapi.json` writes a stable file, and `--check` fails when that file has drifted from the current Arelang source. Without `--output`, `--check` looks for `openapi.json` in the project root.
 
 `are audit` is the first production-shape safety loop. It runs static checks, builds the HTTP contract manifest, verifies every route has a response type and success status, and checks `[capabilities]` in `are.toml` against the server listen address and the MVP least-privilege defaults. It fails on missing required listen capability, missing capability manifest, static check failures, or process spawning being enabled.
 
@@ -201,8 +201,14 @@ fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError> {
 ```
 
 ```are
+enum ApiError {
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
+}
+
 service UsersApi(state: AppState) {
-    use Http.error_map(map_error)
+    use Http.errors(ApiError)
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
@@ -213,7 +219,7 @@ service UsersApi(state: AppState) {
 }
 ```
 
-The compiler checks that `post "/users" body CreateUserInput` is bound by the handler as `input: CreateUserInput`, that `get "/users/search" query SearchUsersQuery` is bound as `query: SearchUsersQuery`, that `get "/users/auth-check" headers AuthHeaders` is bound as `headers: AuthHeaders`, that `get "/session" cookies SessionCookies` is bound as `cookies: SessionCookies`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is bound as `id: UserId`. Domain alias validations and struct field validations are checked statically for compatible string-like types, enforced at the HTTP boundary for body/query/header/cookie/path payloads, exported through `are inspect`, and lowered into OpenAPI schema constraints. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Manual `ensure` remains available for business rules, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.error_map(map_error)` maps errors to HTTP responses with an Arelang `match`. The lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, and `ctx.param<T>()` calls remain available for compatibility and escape hatches.
+The compiler checks that `post "/users" body CreateUserInput` is bound by the handler as `input: CreateUserInput`, that `get "/users/search" query SearchUsersQuery` is bound as `query: SearchUsersQuery`, that `get "/users/auth-check" headers AuthHeaders` is bound as `headers: AuthHeaders`, that `get "/session" cookies SessionCookies` is bound as `cookies: SessionCookies`, that `returns User status 201` matches a `User` or `Result<User, ApiError>` handler return, and that `{id: UserId}` is bound as `id: UserId`. Domain alias validations and struct field validations are checked statically for compatible string-like types, enforced at the HTTP boundary for body/query/header/cookie/path payloads, exported through `are inspect`, and lowered into OpenAPI schema constraints. Runtime then wraps successful domain payloads with the route status, validates response JSON and success status, and sends the HTTP response. Manual `ensure` remains available for business rules, `model User` describes the persisted shape, and `ctx.db.users.insert/get` is resolved through the model-backed in-memory store before `Http.errors(ApiError)` maps raised domain errors through enum variant `status` metadata. The lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, `ctx.param<T>()`, and `Http.error_map(map_error)` calls remain available for compatibility and escape hatches.
 
 ```sh
 curl http://127.0.0.1:8080/health

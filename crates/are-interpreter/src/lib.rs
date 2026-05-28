@@ -606,8 +606,7 @@ fn expect_enum(value: Value, context: &str) -> Result<EnumValue, InterpretError>
 #[cfg(test)]
 mod tests {
     use super::{
-        EnumValue, Host, HttpResponseValue, InterpretError, Value, interpret_function,
-        interpret_function_with_host_and_args,
+        Host, InterpretError, Value, interpret_function, interpret_function_with_host_and_args,
     };
     use are_ast::{FunctionDecl, Item};
     use are_lexer::lex_source;
@@ -701,26 +700,10 @@ mod tests {
 
         let err = interpret_users_api_function("get_user", &mut host).expect_err("user missing");
         let error = err.as_raised_error().expect("not found raises ApiError");
-        let response = map_users_api_error(error.clone(), &mut host);
 
-        assert_eq!(response.status, 404);
-        assert_eq!(response.body, serde_json::json!({ "error": "not_found" }));
-    }
-
-    #[test]
-    fn interprets_error_mapper_match_body() {
-        let mut host = TestHost::new("");
-        let response = map_users_api_error(
-            EnumValue {
-                enum_name: "ApiError".to_string(),
-                variant: "Internal".to_string(),
-                payload: vec![Value::Json(serde_json::Value::String("boom".to_string()))],
-            },
-            &mut host,
-        );
-
-        assert_eq!(response.status, 500);
-        assert_eq!(response.body, serde_json::json!({ "error": "boom" }));
+        assert_eq!(error.enum_name, "ApiError");
+        assert_eq!(error.variant, "NotFound");
+        assert!(error.payload.is_empty());
     }
 
     fn users_api_function(name: &str) -> FunctionDecl {
@@ -784,23 +767,6 @@ mod tests {
             ],
             _ => Vec::new(),
         }
-    }
-
-    fn map_users_api_error(error: EnumValue, host: &mut TestHost) -> HttpResponseValue {
-        let functions = users_api_functions();
-        let mapper = functions.get("map_error").expect("mapper exists");
-        let value = interpret_function_with_host_and_args(
-            mapper,
-            &functions,
-            host,
-            vec![Value::Enum(error)],
-        )
-        .expect("mapper runs");
-
-        let Value::HttpResponse(response) = value else {
-            panic!("mapper should return response");
-        };
-        response
     }
 
     struct TestHost {

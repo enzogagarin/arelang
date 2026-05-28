@@ -70,7 +70,7 @@ Current `are check` behavior:
 - lex each file
 - parse top-level items into AST
 - resolve imports, declarations, service uses, and route handlers
-- typecheck function signatures, generic arity, route handlers, route body/query/headers/cookies contracts, route contract parameter binding, route response/status contracts, typed path params, and HTTP error mappers
+- typecheck function signatures, generic arity, route handlers, route body/query/headers/cookies contracts, route contract parameter binding, route response/status contracts, typed path params, declarative HTTP error contracts, and compatibility HTTP error mappers
 - resolve model database calls such as `ctx.db.users.insert` from local `model User` declarations
 - emit human or JSON diagnostics
 
@@ -99,6 +99,7 @@ Current `are run` behavior:
 - build the checked HTTP contract manifest from the service declaration and local schema declarations
 - normalize incoming HTTP requests into the MVP runtime request type
 - wrap domain payload handler results using the route response/status contract
+- map raised domain errors through `Http.errors(ApiError)` enum status metadata or a compatibility error mapper
 - persist MVP model data through the model-backed in-memory store
 - validate route-level body, query, headers, cookies, path, response, and status contracts at the host boundary
 - start the embedded HTTP MVP runtime
@@ -107,7 +108,7 @@ Current `are test` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - collect the checked service route registry
-- expose route body, query, headers, cookies, response, status, typed path param, and handler data in the test report
+- expose route body, query, headers, cookies, response, status, typed path param, route error type, and handler data in the test report
 - execute built-in MVP runtime scenarios without opening a TCP listener
 - emit human or JSON test reports
 
@@ -115,7 +116,7 @@ Current `are inspect` behavior:
 
 - run the same static checks and runtime project preparation as `are run`
 - build the checked HTTP contract manifest without opening a TCP listener
-- emit service, routes, body type, query type, headers type, cookies type, response type, status, typed path params, handler, local schema, field validation, and error mapper data in human or JSON form
+- emit service, routes, body type, query type, headers type, cookies type, response type, status, route error type, typed path params, handler, local schema, field validation, error contract, and compatibility error mapper data in human or JSON form
 
 Current `are openapi` behavior:
 
@@ -123,9 +124,10 @@ Current `are openapi` behavior:
 - emit an OpenAPI 3.1 JSON document without opening a TCP listener
 - map checked service routes to `paths`
 - map route body and response contracts to JSON request and response schemas
+- map declarative error contracts to OpenAPI error responses
 - map typed path params plus typed query/header/cookie contracts to OpenAPI parameters
 - map alias and field validations to JSON Schema/OpenAPI constraints such as `format`, `minLength`, and `maxLength`
-- map aliases, structs, models, and enums to `components.schemas`
+- map aliases, structs, models, and enums to `components.schemas`, preserving enum variant status metadata with `x-are-status`
 - preserve Arelang-specific model metadata through `x-are-*` extensions
 - write the generated document with `--output`
 - compare the current source-derived document against a checked-in file with `--check`

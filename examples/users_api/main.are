@@ -50,9 +50,9 @@ model User {
 }
 
 enum ApiError {
-    InvalidInput(message: String)
-    NotFound
-    Internal(message: String)
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
 }
 
 fn health(ctx: Http.Context<AppState>) -> HealthResponse {
@@ -81,16 +81,8 @@ fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError> {
     return user
 }
 
-fn map_error(err: ApiError) -> Http.Response {
-    match err {
-        InvalidInput(message) => return Http.Response.error(400, { "error": message })
-        NotFound => return Http.Response.error(404, { "error": "not_found" })
-        Internal(message) => return Http.Response.error(500, { "error": message })
-    }
-}
-
 service UsersApi(state: AppState) {
-    use Http.error_map(map_error)
+    use Http.errors(ApiError)
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201

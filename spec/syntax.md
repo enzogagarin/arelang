@@ -76,11 +76,13 @@ Domain aliases can carry validation contracts when a primitive has business mean
 
 ```are
 enum ApiError {
-    InvalidInput(message: String)
-    NotFound
-    Internal(message: String)
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
 }
 ```
+
+Enums used as HTTP service error contracts can attach `status N` to each variant. This keeps HTTP mapping declarative while the handler code stays domain-shaped. Variants without payloads produce a stable snake_case error code such as `not_found`; variants with a single `message` or `error` payload use that payload as the response error value.
 
 ## Services And Routes
 
@@ -88,6 +90,8 @@ enum ApiError {
 
 ```are
 service UsersApi(state: AppState) {
+    use Http.errors(ApiError)
+
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
@@ -97,7 +101,7 @@ service UsersApi(state: AppState) {
 }
 ```
 
-The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, headers contracts, cookies contracts, response contracts, status contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with a handler param such as `input: CreateUserInput`, `query SearchUsersQuery` must line up with `query: SearchUsersQuery`, `headers AuthHeaders` must line up with `headers: AuthHeaders`, `cookies SessionCookies` must line up with `cookies: SessionCookies`, `returns User status 201` must line up with the success response where the compiler can infer it, and `{id: UserId}` must line up with `id: UserId`. Lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, and `ctx.param<T>()` remain available as compatibility escape hatches.
+The compiler builds a route registry from this declaration. Method shorthand is the canonical style, while the older `route GET "/path" -> handler` shape remains parseable during the MVP transition. Body contracts, query contracts, headers contracts, cookies contracts, response contracts, status contracts, declarative error contracts, and typed path parameters are checked against handler code: `body CreateUserInput` must line up with a handler param such as `input: CreateUserInput`, `query SearchUsersQuery` must line up with `query: SearchUsersQuery`, `headers AuthHeaders` must line up with `headers: AuthHeaders`, `cookies SessionCookies` must line up with `cookies: SessionCookies`, `returns User status 201` must line up with the success response where the compiler can infer it, `use Http.errors(ApiError)` must line up with routes returning `Result<Payload, ApiError>`, and `{id: UserId}` must line up with `id: UserId`. Lower-level `req.json<T>()`, `req.query<T>()`, `req.headers<T>()`, `req.cookies<T>()`, `ctx.param<T>()`, and `Http.error_map(map_error)` remain available as compatibility escape hatches.
 
 ## v0 Keywords
 

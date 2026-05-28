@@ -45,7 +45,7 @@ pub(crate) fn runtime_response(
     let response = interpreted_response(
         state,
         functions,
-        contracts.error_mapper.as_deref(),
+        contracts,
         &HandlerRequest {
             route,
             params: &params,
@@ -94,7 +94,7 @@ fn apply_route_response_contract(
 fn interpreted_response(
     state: &RuntimeState,
     functions: &RuntimeFunctions,
-    error_mapper: Option<&str>,
+    contracts: &HttpContractManifest,
     request: &HandlerRequest<'_>,
 ) -> RuntimeResponse {
     let route = request.route;
@@ -143,7 +143,7 @@ fn interpreted_response(
             }
 
             if let Some(error) = err.as_raised_error() {
-                return mapped_error_response(functions, error_mapper, &mut host, error.clone());
+                return mapped_error_response(functions, contracts, &mut host, error.clone());
             }
 
             eprintln!("Arelang interpreter failed in `{handler}`: {err}");
@@ -229,10 +229,15 @@ fn is_http_request_type(ty: &TypeExpr) -> bool {
 
 fn mapped_error_response(
     functions: &RuntimeFunctions,
-    error_mapper: Option<&str>,
+    contracts: &HttpContractManifest,
     host: &mut RuntimeHost<'_>,
     error: are_interpreter::EnumValue,
 ) -> RuntimeResponse {
+    if let Some(error_contract) = &contracts.error_contract {
+        return declarative_error_response(contracts, error_contract, &error);
+    }
+
+    let error_mapper = contracts.error_mapper.as_deref();
     let Some(mapper_name) = error_mapper else {
         eprintln!(
             "Arelang application error {}.{} has no mapper",
@@ -265,6 +270,113 @@ fn mapped_error_response(
             error_response(500, "error_mapper_failed")
         }
     }
+}
+
+fn declarative_error_response(
+    contracts: &HttpContractManifest,
+    error_contract: &str,
+    error: &are_interpreter::EnumValue,
+) -> RuntimeResponse {
+    if error.enum_name != error_contract {
+        eprintln!(
+            "Arelang application error {}.{} does not match service error contract {error_contract}",
+            error.enum_name, error.variant
+        );
+        return error_response(500, "error_contract_mismatch");
+    }
+
+    let Some(enum_schema) = contracts
+        .schemas
+        .enums
+        .iter()
+        .find(|schema| schema.name == error_contract)
+    else {
+        eprintln!("Arelang error contract `{error_contract}` was not found at runtime");
+        return error_response(500, "error_contract_missing");
+    };
+
+    let Some(variant) = enum_schema
+        .variants
+        .iter()
+        .find(|variant| variant.name == error.variant)
+    else {
+        eprintln!(
+            "Arelang error contract `{error_contract}` has no variant `{}`",
+            error.variant
+        );
+        return error_response(500, "error_contract_missing");
+    };
+
+    let Some(status) = variant.status else {
+        eprintln!(
+            "Arelang error contract `{error_contract}.{}` has no status",
+            variant.name
+        );
+        return error_response(500, "error_contract_missing");
+    };
+
+    RuntimeResponse {
+        status,
+        body: declarative_error_body(&variant.name, &variant.payload, &error.payload),
+    }
+}
+
+fn declarative_error_body(
+    variant_name: &str,
+    fields: &[crate::contracts::HttpFieldSchema],
+    payload: &[InterpretedValue],
+) -> serde_json::Value {
+    if fields.is_empty() {
+        return serde_json::json!({ "error": error_code(variant_name) });
+    }
+
+    if fields.len() == 1
+        && matches!(fields[0].name.as_str(), "message" | "error")
+        && let Some(value) = payload.first()
+    {
+        return serde_json::json!({ "error": interpreted_value_to_json(value) });
+    }
+
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "error".to_string(),
+        serde_json::Value::String(error_code(variant_name)),
+    );
+    for (field, value) in fields.iter().zip(payload) {
+        body.insert(field.name.clone(), interpreted_value_to_json(value));
+    }
+
+    serde_json::Value::Object(body)
+}
+
+fn interpreted_value_to_json(value: &InterpretedValue) -> serde_json::Value {
+    match value {
+        InterpretedValue::Json(value) => value.clone(),
+        InterpretedValue::Bool(value) => serde_json::Value::Bool(*value),
+        InterpretedValue::Enum(error) => serde_json::json!({
+            "variant": error.variant,
+        }),
+        InterpretedValue::HttpResponse(response) => serde_json::json!({
+            "status": response.status,
+            "body": response.body,
+        }),
+        InterpretedValue::Unit => serde_json::Value::Null,
+    }
+}
+
+fn error_code(variant_name: &str) -> String {
+    let mut output = String::new();
+    for (index, ch) in variant_name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                output.push('_');
+            }
+            output.push(ch.to_ascii_lowercase());
+        } else {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 fn type_expr_name(ty: &TypeExpr) -> String {

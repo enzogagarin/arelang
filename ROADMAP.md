@@ -72,6 +72,7 @@ Output:
 - `Option<T>` arity checks: done
 - HTTP route handler signature checks: done
 - HTTP error mapper checks: done
+- declarative HTTP error contract checks through `Http.errors(ApiError)`: done after HTTP MVP
 - `?` propagation checks: done
 - route body contract checks: done
 - route query contract checks: done
@@ -114,7 +115,7 @@ Status: complete for the HTTP MVP.
 Output:
 
 - `service` route registry: done for one-service MVP projects
-- checked HTTP contract manifest: done for service, routes, body, query, headers, cookies, response, status, typed params, handlers, local schemas, and error mapper
+- checked HTTP contract manifest: done for service, routes, body, query, headers, cookies, response, status, route error types, typed params, handlers, local schemas, declarative error contract, and compatibility error mapper
 - local server runner: done for `users_api`
 - request/response runtime types: done for the MVP HTTP boundary
 - JSON decode/encode MVP: done for local structs/models with primitive fields
@@ -128,7 +129,7 @@ Output:
 - route response contracts: done for `returns Payload status N`
 - declarative request payload validation: done for body, query, headers, and cookies
 - domain payload handlers: done for `Payload` and `Result<Payload, E>`
-- API error mapping: done through `Http.error_map`
+- API error mapping: done through `Http.errors(ApiError)` enum status metadata and compatibility `Http.error_map`
 
 Definition of done:
 
@@ -152,10 +153,10 @@ Output:
 - `are fmt`: done for parsed MVP syntax
 - `are test`: done for built-in MVP scenarios
 - `are inspect`: done for checked HTTP contract manifest output
-- `are inspect` schema export: done for aliases, structs, models, enum variants, model collections, and primary/unique field metadata
+- `are inspect` schema export: done for aliases, structs, models, enum variants, enum HTTP statuses, route error types, model collections, and primary/unique field metadata
 - `are inspect` field validation export: done for struct field validation metadata
 - `are inspect` alias validation export: done for domain primitive validation metadata
-- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, responses, path/query/header/cookie params, alias and field validation constraints, servers, component schemas, file output, and drift checks
+- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, success/error responses, path/query/header/cookie params, alias and field validation constraints, declarative error contract responses, servers, component schemas, file output, and drift checks
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done
@@ -174,6 +175,7 @@ Status: post-MVP started.
 
 Output:
 
+- declarative domain error contracts: done for HTTP status metadata and automatic error response mapping
 - request scope model
 - first arena/region checker
 - capability manifest checks: started for HTTP MVP listen/process/default-closed capabilities

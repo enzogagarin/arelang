@@ -132,6 +132,11 @@ assert_users_api_flow() {
     get_status="$(curl -sS -o "$TMP_DIR/${label}_get_user.json" -w '%{http_code}' "$base_url/users/1")"
     assert_eq "$get_status" "200" "$label get user HTTP status"
     assert_file_contains "$TMP_DIR/${label}_get_user.json" '"name":"Ada Lovelace"' "$label get user response"
+
+    local missing_status
+    missing_status="$(curl -sS -o "$TMP_DIR/${label}_missing_user.json" -w '%{http_code}' "$base_url/users/999")"
+    assert_eq "$missing_status" "404" "$label missing user HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_missing_user.json" '"error":"not_found"' "$label missing user response"
 }
 
 log "format, tests, and lints"
@@ -150,6 +155,8 @@ run "$ROOT_DIR/are" inspect "$ROOT_DIR/examples/users_api" --json >"$TMP_DIR/use
 assert_file_contains "$TMP_DIR/users_inspect.json" '"schemas"' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"collection": "users"' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"primary": true' "users inspect contract"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"error_contract": "ApiError"' "users inspect contract"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"error_type": "ApiError"' "users inspect contract"
 run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" --output "$TMP_DIR/users_openapi.json"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"openapi": "3.1.0"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/{id}"' "users OpenAPI document"
@@ -160,6 +167,8 @@ assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "header"' "users OpenA
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/session"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "cookie"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"#/components/schemas/User"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"x-are-status": 404' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"const": "not_found"' "users OpenAPI document"
 run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" --check --output "$TMP_DIR/users_openapi.json"
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/hello_api" --json
 run "$ROOT_DIR/are" audit "$ROOT_DIR/examples/users_api" --json

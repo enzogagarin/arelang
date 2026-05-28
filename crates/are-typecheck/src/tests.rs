@@ -75,6 +75,61 @@ fn validates_error_map_signature() {
 }
 
 #[test]
+fn accepts_declarative_http_error_contracts() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            enum ApiError {
+                Failed(message: String) status 500
+                NotFound status 404
+            }
+
+            fn create(ctx: Http.Context<AppState>) -> Result<Http.Response, ApiError> {
+                return Http.Response.ok({ "ok": true })
+            }
+
+            service Api(state: AppState) {
+                use Http.errors(ApiError)
+                post "/users" -> create
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn validates_declarative_http_error_contracts() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            enum ApiError {
+                Failed
+                Redirect status 302
+            }
+
+            fn create(ctx: Http.Context<AppState>) -> Result<Http.Response, ApiError> {
+                return Http.Response.ok({ "ok": true })
+            }
+
+            service Api(state: AppState) {
+                use Http.errors(ApiError)
+                post "/users" -> create
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "E_HTTP_0311")
+    );
+}
+
+#[test]
 fn rejects_duplicate_struct_fields_and_params() {
     let source = r"
             struct User {

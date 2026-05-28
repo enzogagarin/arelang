@@ -256,10 +256,24 @@ impl<'a> Parser<'a> {
             self.expect_kind(&TokenKind::RightParen, "expected `)` after enum payload")?;
         }
 
-        let end = self.previous_range()?.end;
+        let mut status = None;
+        let mut end = self.previous_range()?.end;
+        if let Some(range) = self.match_identifier("status") {
+            let status_token = self.expect_kind(
+                &TokenKind::Integer,
+                "expected integer HTTP status code after enum variant status",
+            )?;
+            end = status_token.range.end;
+            status = Some(RouteStatus {
+                value: status_token.lexeme.parse().unwrap_or(0),
+                range: SourceRange::new(range.start, status_token.range.end),
+            });
+        }
+
         Some(EnumVariant {
             name,
             payload,
+            status,
             range: SourceRange::new(start, end),
         })
     }

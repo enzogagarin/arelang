@@ -983,24 +983,27 @@ impl TypeChecker<'_> {
         }
 
         let error_map_uses = self.error_map_uses(decl);
-        if error_map_uses.is_empty() {
+        let error_contract_uses = self.error_contract_uses(decl);
+        let mapping_count = error_map_uses.len() + error_contract_uses.len();
+
+        if mapping_count == 0 {
             self.diagnostics.push(Diagnostic::error(
                 "E_HTTP_0302",
                 &self.file,
                 decl.range,
                 format!("service `{}` needs an HTTP error mapper", decl.name),
-                "routes returning Result<Payload, E> require `use Http.error_map(map_error)`",
+                "routes returning Result<Payload, E> require `use Http.errors(ApiError)` or `use Http.error_map(map_error)`",
             ));
             return;
         }
 
-        if error_map_uses.len() > 1 {
+        if mapping_count > 1 {
             self.diagnostics.push(Diagnostic::error(
                 "E_HTTP_0303",
                 &self.file,
                 decl.range,
-                format!("service `{}` has multiple HTTP error mappers", decl.name),
-                "the HTTP MVP allows one `Http.error_map` per service",
+                format!("service `{}` has multiple HTTP error mappings", decl.name),
+                "use one of `Http.errors(ApiError)` or `Http.error_map(map_error)` per service",
             ));
         }
 
@@ -1017,6 +1020,21 @@ impl TypeChecker<'_> {
             }
 
             self.check_error_mapper(&service_use.args[0], first_error);
+        }
+
+        for service_use in error_contract_uses {
+            if service_use.args.len() != 1 {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0304",
+                    &self.file,
+                    service_use.range,
+                    "Http.errors expects exactly one enum type",
+                    "use `Http.errors(ApiError)`",
+                ));
+                continue;
+            }
+
+            self.check_error_contract(&service_use.args[0], first_error);
         }
     }
 
@@ -1095,6 +1113,80 @@ impl TypeChecker<'_> {
             .iter()
             .filter(|service_use| self.path_is_http(&service_use.target, "error_map"))
             .collect()
+    }
+
+    fn error_contract_uses<'a>(&self, decl: &'a ServiceDecl) -> Vec<&'a are_ast::ServiceUse> {
+        decl.uses
+            .iter()
+            .filter(|service_use| self.path_is_http(&service_use.target, "errors"))
+            .collect()
+    }
+
+    fn check_error_contract(&mut self, contract_path: &Path, expected_error: &TypeExpr) {
+        if contract_path.segments.len() != 1 {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0310",
+                &self.file,
+                contract_path.range,
+                "HTTP error contract must be a local enum",
+                "use a local enum name such as `ApiError`",
+            ));
+            return;
+        }
+
+        let contract_name = &contract_path.segments[0];
+        let expected_name = type_name(expected_error);
+        if contract_name != &expected_name {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0310",
+                &self.file,
+                contract_path.range,
+                format!(
+                    "HTTP error contract `{contract_name}` does not match route errors `{expected_name}`"
+                ),
+                "the enum passed to `Http.errors` must match the service route Result error type",
+            ));
+            return;
+        }
+
+        let Some(error_enum) = self.enums.get(contract_name).copied() else {
+            self.diagnostics.push(Diagnostic::error(
+                "E_HTTP_0310",
+                &self.file,
+                contract_path.range,
+                format!("HTTP error contract `{contract_name}` is not a local enum"),
+                "declare a local enum with status metadata, then pass it to `Http.errors`",
+            ));
+            return;
+        };
+
+        let enum_name = error_enum.name.clone();
+        let variants = error_enum.variants.clone();
+        for variant in variants {
+            let Some(status) = variant.status else {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0311",
+                    &self.file,
+                    variant.range,
+                    format!("error variant `{enum_name}.{}` has no HTTP status", variant.name),
+                    "variants used by `Http.errors` must declare status metadata, such as `NotFound status 404`",
+                ));
+                continue;
+            };
+
+            if !(400..=599).contains(&status.value) {
+                self.diagnostics.push(Diagnostic::error(
+                    "E_HTTP_0311",
+                    &self.file,
+                    status.range,
+                    format!(
+                        "error variant `{enum_name}.{}` uses non-error status {}",
+                        variant.name, status.value
+                    ),
+                    "`Http.errors` variants should use HTTP client/server error statuses from 400 to 599",
+                ));
+            }
+        }
     }
 
     fn result_response_error<'b>(&self, ty: &'b TypeExpr) -> Option<&'b TypeExpr> {

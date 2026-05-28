@@ -208,6 +208,10 @@ fn format_enum(output: &mut String, decl: &EnumDecl) {
             );
             output.push(')');
         }
+        if let Some(status) = variant.status {
+            output.push_str(" status ");
+            output.push_str(&status.value.to_string());
+        }
         output.push('\n');
     }
     output.push_str("}\n");

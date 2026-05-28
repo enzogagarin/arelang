@@ -57,6 +57,7 @@ fn formats_route_summary_lines() {
         cookies_type: None,
         response_type: Some("AuthCheckResponse".to_string()),
         status: Some(200),
+        error_type: None,
         path_params: Vec::new(),
         handler: "auth_check".to_string(),
     });
@@ -77,7 +78,8 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(contracts.service, "UsersApi");
     assert_eq!(contracts.routes.len(), 6);
     assert!(contracts.has("POST", "/users"));
-    assert_eq!(contracts.error_mapper.as_deref(), Some("map_error"));
+    assert_eq!(contracts.error_mapper.as_deref(), None);
+    assert_eq!(contracts.error_contract.as_deref(), Some("ApiError"));
     assert_contract_schemas(&contracts);
 
     let create_user = contracts
@@ -88,6 +90,7 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(create_user.body_type.as_deref(), Some("CreateUserInput"));
     assert_eq!(create_user.response_type.as_deref(), Some("User"));
     assert_eq!(create_user.status, Some(201));
+    assert_eq!(create_user.error_type.as_deref(), Some("ApiError"));
 
     let search_users = contracts
         .routes
@@ -167,7 +170,8 @@ fn handles_users_api_flow() {
             ),
         ],
         schemas: HttpSchemaManifest::default(),
-        error_mapper: Some("map_error".to_string()),
+        error_mapper: None,
+        error_contract: None,
     };
     let functions = users_api_functions();
 
@@ -226,6 +230,27 @@ fn handles_users_api_flow() {
     );
     assert_eq!(fetched.status, 200);
     assert_eq!(fetched.body["email"], "ada@example.com");
+}
+
+#[test]
+fn maps_declarative_users_api_errors() {
+    let state = RuntimeState::default();
+    let check = check_path(Path::new("../../examples/users_api")).expect("project checks");
+    assert!(check.ok(), "{:#?}", check.diagnostics);
+    let service = find_single_service(&check.modules).expect("single service");
+    let contracts =
+        HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
+    let functions = RuntimeFunctions::from_modules(&check.modules);
+
+    let missing = runtime_response(
+        &state,
+        &contracts,
+        &functions,
+        &request(Method::Get, "/users/42", ""),
+    );
+
+    assert_eq!(missing.status, 404);
+    assert_eq!(missing.body["error"], "not_found");
 }
 
 #[test]
@@ -425,6 +450,21 @@ fn exports_users_api_openapi_document() {
         create_user["responses"]["201"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/User"
     );
+    assert_eq!(
+        create_user["responses"]["400"]["content"]["application/json"]["schema"]["properties"]["error"]
+            ["type"],
+        "string"
+    );
+    assert_eq!(
+        create_user["responses"]["404"]["content"]["application/json"]["schema"]["properties"]["error"]
+            ["const"],
+        "not_found"
+    );
+    assert_eq!(
+        create_user["responses"]["500"]["content"]["application/json"]["schema"]["properties"]["error"]
+            ["type"],
+        "string"
+    );
 
     let get_user_param = &document["paths"]["/users/{id}"]["get"]["parameters"][0];
     assert_eq!(get_user_param["name"], "id");
@@ -482,6 +522,8 @@ fn exports_users_api_openapi_document() {
         api_error["oneOf"][0]["properties"]["variant"]["const"],
         "InvalidInput"
     );
+    assert_eq!(api_error["oneOf"][0]["x-are-status"], 400);
+    assert_eq!(api_error["oneOf"][1]["x-are-status"], 404);
 }
 
 fn users_api_functions() -> RuntimeFunctions {
@@ -507,6 +549,7 @@ fn route(
         cookies_type: None,
         response_type: response_type.map(str::to_string),
         status,
+        error_type: None,
         path_params: Vec::new(),
         handler: handler.to_string(),
     }
@@ -573,6 +616,9 @@ fn assert_contract_schemas(contracts: &HttpContractManifest) {
     assert_eq!(api_error.variants.len(), 3);
     assert_eq!(api_error.variants[0].name, "InvalidInput");
     assert_eq!(api_error.variants[0].payload[0].name, "message");
+    assert_eq!(api_error.variants[0].status, Some(400));
+    assert_eq!(api_error.variants[1].status, Some(404));
+    assert_eq!(api_error.variants[2].status, Some(500));
 }
 
 fn request(method: Method, url: &str, body: &str) -> RuntimeRequest {

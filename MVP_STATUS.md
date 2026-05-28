@@ -38,7 +38,8 @@ The smoke gate verifies:
 - route handlers can receive typed contract parameters directly
 - successful domain payloads are wrapped into HTTP responses by route contracts
 - `Result<T, E>` and `?` provide the MVP error flow
-- `Http.error_map` maps typed domain errors to HTTP responses
+- `Http.errors(ApiError)` maps typed domain errors to HTTP responses through enum variant status metadata
+- `Http.error_map` remains available as an explicit compatibility mapper
 - `model` declarations back the MVP in-memory `ctx.db.<collection>.insert/get` store
 - declarative alias and field validations run at the HTTP boundary and are exported through `inspect` and OpenAPI
 
@@ -54,10 +55,16 @@ struct CreateUserInput {
     name: DisplayName
 }
 
-model User collection users {
+model User {
     id: UserId primary
     email: Email unique
     name: DisplayName
+}
+
+enum ApiError {
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
 }
 
 fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<User, ApiError> {
@@ -66,7 +73,7 @@ fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<Us
 }
 
 service UsersApi(state: AppState) {
-    use Http.error_map(map_error)
+    use Http.errors(ApiError)
 
     post "/users" body CreateUserInput -> create_user returns User status 201
     get "/users/{id: UserId}" -> get_user returns User status 200

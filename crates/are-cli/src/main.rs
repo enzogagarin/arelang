@@ -517,6 +517,9 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
     if let Some(error_mapper) = &manifest.error_mapper {
         println!("error_mapper {error_mapper}");
     }
+    if let Some(error_contract) = &manifest.error_contract {
+        println!("error_contract {error_contract}");
+    }
 
     println!("routes:");
     for route in &manifest.routes {
@@ -580,7 +583,12 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
                 schema.name,
                 brace_list(schema.variants.iter().map(|variant| {
                     if variant.payload.is_empty() {
-                        return variant.name.clone();
+                        let mut label = variant.name.clone();
+                        if let Some(status) = variant.status {
+                            label.push_str(" status ");
+                            label.push_str(&status.to_string());
+                        }
+                        return label;
                     }
 
                     let payload = variant
@@ -589,7 +597,12 @@ fn print_contract_manifest(manifest: &HttpContractManifest) {
                         .map(|field| format!("{}: {}", field.name, field.ty))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("{}({payload})", variant.name)
+                    let mut label = format!("{}({payload})", variant.name);
+                    if let Some(status) = variant.status {
+                        label.push_str(" status ");
+                        label.push_str(&status.to_string());
+                    }
+                    label
                 }))
             );
         }
@@ -862,9 +875,9 @@ model User {{
 }}
 
 enum ApiError {{
-    InvalidInput(message: String)
-    NotFound
-    Internal(message: String)
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
 }}
 
 fn health(ctx: Http.Context<AppState>) -> HealthResponse {{
@@ -893,16 +906,8 @@ fn get_user(ctx: Http.Context<AppState>, id: UserId) -> Result<User, ApiError> {
     return user
 }}
 
-fn map_error(err: ApiError) -> Http.Response {{
-    match err {{
-        InvalidInput(message) => return Http.Response.error(400, {{ "error": message }})
-        NotFound => return Http.Response.error(404, {{ "error": "not_found" }})
-        Internal(message) => return Http.Response.error(500, {{ "error": message }})
-    }}
-}}
-
 service {service_name}(state: AppState) {{
-    use Http.error_map(map_error)
+    use Http.errors(ApiError)
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
@@ -1086,7 +1091,9 @@ mod tests {
         assert!(source.contains("fn auth_check"));
         assert!(source.contains("fn current_session"));
         assert!(source.contains("service GeneratedUsersApi"));
-        assert!(source.contains("use Http.error_map(map_error)"));
+        assert!(source.contains("use Http.errors(ApiError)"));
+        assert!(source.contains("InvalidInput(message: String) status 400"));
+        assert!(source.contains("NotFound status 404"));
         assert!(source.contains("type Email = opaque String validate.email"));
         assert!(
             source.contains("type DisplayName = opaque String validate.length(min: 2, max: 80)")

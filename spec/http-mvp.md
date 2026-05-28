@@ -26,9 +26,9 @@ Current implementation status: complete for the HTTP MVP.
 
 - `are run examples/users_api` starts a real local server
 - route registry comes from parsed and typechecked Arelang service declarations
-- runtime preparation builds one checked HTTP contract manifest for service, routes, body types, query types, headers types, cookies types, response types, statuses, typed params, handlers, local schemas, and the error mapper
-- `are inspect --json` exposes that checked HTTP contract manifest without starting the server, including aliases, structs, models, enum variants, model collections, and model field metadata
-- `are openapi` exports the checked HTTP contract manifest as OpenAPI 3.1 JSON with paths, request bodies, responses, typed path/query/header/cookie parameters, server URL, component schemas, file output, and drift checks
+- runtime preparation builds one checked HTTP contract manifest for service, routes, body types, query types, headers types, cookies types, response types, statuses, route error types, typed params, handlers, local schemas, and the service error contract
+- `are inspect --json` exposes that checked HTTP contract manifest without starting the server, including aliases, structs, models, enum variants, enum HTTP statuses, route error types, model collections, and model field metadata
+- `are openapi` exports the checked HTTP contract manifest as OpenAPI 3.1 JSON with paths, request bodies, success and error responses, typed path/query/header/cookie parameters, server URL, component schemas, file output, and drift checks
 - `are audit --json` checks route contracts and `[capabilities]` against the HTTP server surface
 - canonical service syntax supports `get`, `post`, typed path params, request body contracts, request query contracts, request headers contracts, request cookies contracts, response contracts, and success status contracts
 - validation syntax supports `validate.email` and `validate.length(min: N, max: N)` on domain aliases and request contract structs
@@ -61,7 +61,21 @@ fn health(ctx: Http.Context<AppState>, req: Http.Request) -> Http.Response
 fn create_user(ctx: Http.Context<AppState>, req: Http.Request) -> Result<Http.Response, ApiError>
 ```
 
-Routes returning `Result<Payload, E>` or `Result<Http.Response, E>` require one service-level mapper:
+Routes returning `Result<Payload, E>` or `Result<Http.Response, E>` require one service-level error mapping. The preferred post-MVP style is a declarative error contract:
+
+```are
+enum ApiError {
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
+}
+
+service UsersApi(state: AppState) {
+    use Http.errors(ApiError)
+}
+```
+
+The compatibility style still accepts an explicit mapper function:
 
 ```are
 fn map_error(err: ApiError) -> Http.Response
@@ -97,7 +111,7 @@ The compiler should check:
 - handler exists
 - handler has a valid HTTP signature
 - handler returns `Http.Response`, `Result<Http.Response, E>`, the declared `returns` payload, or `Result<Payload, E>`
-- result-returning handlers have a compatible `Http.error_map`
+- result-returning handlers have a compatible `Http.errors(ApiError)` contract or compatibility `Http.error_map`
 - typed route params such as `{id: UserId}` are bound through matching handler params such as `id: UserId`
 - body contracts such as `body CreateUserInput` are bound through matching handler params such as `input: CreateUserInput`
 - query contracts such as `query SearchUsersQuery` are bound through matching handler params such as `query: SearchUsersQuery`
@@ -108,7 +122,7 @@ The compiler should check:
 - model database calls such as `ctx.db.users.insert(input)` resolve `users` from `model User`
 - duplicate method/path pairs are rejected
 
-At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body/query/header/cookie validation, domain payload wrapping, success response validation, and tool-facing API schema export. The OpenAPI exporter consumes that same manifest, so documentation/client generation follows the exact route contracts the runtime uses. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.error_map` are intentionally outside the success response contract.
+At runtime, the checked HTTP contract manifest is the source of truth for route matching, request body/query/header/cookie validation, domain payload wrapping, declarative error mapping, success response validation, and tool-facing API schema export. The OpenAPI exporter consumes that same manifest, so documentation/client generation follows the exact route contracts the runtime uses. Domain payloads are wrapped into HTTP responses with the route `status` value, then successful responses are validated against `returns` and `status` before they leave the HTTP boundary. Error responses produced by `Http.errors(ApiError)` or compatibility `Http.error_map` are intentionally outside the success response contract.
 
 Domain alias validations and field validations are part of the same route contract surface. They are checked by the typechecker, enforced before typed body/query/header/cookie/path payloads reach handlers, included in `are inspect --json`, and lowered to OpenAPI schema constraints.
 
@@ -188,13 +202,27 @@ ensure validate.length(input.name, min: 2, max: 80), ApiError.InvalidInput("inva
 
 ## Error Mapping
 
-An API error enum maps to HTTP status codes through one function.
+A service error enum maps to HTTP status codes through variant metadata. This is the preferred form because the error family remains a domain enum and the HTTP translation is visible at the declaration site.
+
+```are
+enum ApiError {
+    InvalidInput(message: String) status 400
+    NotFound status 404
+    Internal(message: String) status 500
+}
+
+service UsersApi(state: AppState) {
+    use Http.errors(ApiError)
+}
+```
+
+The typechecker requires every variant used by `Http.errors` to declare a 400-599 status. Runtime maps empty variants to snake_case error codes, so `NotFound status 404` returns `{ "error": "not_found" }`. A single payload named `message` or `error` becomes the response error value, so `InvalidInput("invalid_email")` returns `{ "error": "invalid_email" }`.
+
+Explicit mapper functions remain supported as an escape hatch:
 
 ```are
 fn map_error(err: ApiError) -> Http.Response
 ```
-
-This is simpler than a magical framework mapper for v0 and easier for the compiler to support.
 
 ## Capability Audit
 

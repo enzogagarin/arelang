@@ -14,7 +14,7 @@ fn parses_users_api_shape() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
 
     let module = module.expect("module parses");
-    assert_eq!(module.items.len(), 25);
+    assert_eq!(module.items.len(), 26);
     assert!(matches!(module.items.last(), Some(Item::Service(_))));
     assert!(module.items.iter().any(|item| {
         matches!(
@@ -38,6 +38,14 @@ fn parses_users_api_shape() {
     let create_user = function_named(&module, "create_user");
     let FunctionBody::Parsed { block } = &create_user.body else {
         panic!("create_user body should parse into statements");
+    };
+    assert_eq!(block.statements.len(), 2);
+    assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));
+    assert!(matches!(block.statements.last(), Some(Stmt::Return { .. })));
+
+    let list_users = function_named(&module, "list_users");
+    let FunctionBody::Parsed { block } = &list_users.body else {
+        panic!("list_users body should parse into statements");
     };
     assert_eq!(block.statements.len(), 2);
     assert!(matches!(block.statements.first(), Some(Stmt::Let { .. })));

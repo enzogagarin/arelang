@@ -76,7 +76,7 @@ fn builds_http_contract_manifest_from_service() {
         HttpContractManifest::from_service_and_modules(service, &check.modules).expect("contracts");
 
     assert_eq!(contracts.service, "UsersApi");
-    assert_eq!(contracts.routes.len(), 6);
+    assert_eq!(contracts.routes.len(), 7);
     assert!(contracts.has("POST", "/users"));
     assert_eq!(contracts.error_mapper.as_deref(), None);
     assert_eq!(contracts.error_contract.as_deref(), Some("ApiError"));
@@ -91,6 +91,15 @@ fn builds_http_contract_manifest_from_service() {
     assert_eq!(create_user.response_type.as_deref(), Some("User"));
     assert_eq!(create_user.status, Some(201));
     assert_eq!(create_user.error_type.as_deref(), Some("ApiError"));
+
+    let list_users = contracts
+        .routes
+        .iter()
+        .find(|route| route.method == "GET" && route.path == "/users")
+        .expect("GET /users");
+    assert_eq!(list_users.response_type.as_deref(), Some("List<User>"));
+    assert_eq!(list_users.status, Some(200));
+    assert_eq!(list_users.error_type.as_deref(), Some("ApiError"));
 
     let search_users = contracts
         .routes
@@ -162,6 +171,14 @@ fn handles_users_api_flow() {
             ),
             route(
                 "GET",
+                "/users",
+                None,
+                Some("List<User>"),
+                Some(200),
+                "list_users",
+            ),
+            route(
+                "GET",
                 "/users/{id: UserId}",
                 None,
                 Some("User"),
@@ -230,6 +247,25 @@ fn handles_users_api_flow() {
     );
     assert_eq!(fetched.status, 200);
     assert_eq!(fetched.body["email"], "ada@example.com");
+
+    assert_users_list_contains_created(&state, &contracts, &functions);
+}
+
+fn assert_users_list_contains_created(
+    state: &RuntimeState,
+    contracts: &HttpContractManifest,
+    functions: &RuntimeFunctions,
+) {
+    let listed = runtime_response(
+        state,
+        contracts,
+        functions,
+        &request(Method::Get, "/users", ""),
+    );
+    assert_eq!(listed.status, 200);
+    let users = listed.body.as_array().expect("users list body");
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0]["email"], "ada@example.com");
 }
 
 #[test]
@@ -390,6 +426,9 @@ fn runtime_store_uses_model_collection_contracts() {
         .get_model("posts", serde_json::json!(1))
         .expect("post fetches");
     assert_eq!(fetched, created);
+
+    let listed = host.list_model("posts").expect("posts list");
+    assert_eq!(listed, serde_json::json!([created]));
 }
 
 #[test]
@@ -426,7 +465,7 @@ fn tests_users_api_project() {
     let report = test_project(Path::new("../../examples/users_api")).expect("project tests");
     assert_eq!(report.package, "users-api");
     assert_eq!(report.service, "UsersApi");
-    assert_eq!(report.routes.len(), 6);
+    assert_eq!(report.routes.len(), 7);
     assert_eq!(report.scenarios.len(), 1);
     assert_eq!(report.scenarios[0].name, "users API HTTP flow");
 }
@@ -464,6 +503,17 @@ fn exports_users_api_openapi_document() {
         create_user["responses"]["500"]["content"]["application/json"]["schema"]["properties"]["error"]
             ["type"],
         "string"
+    );
+
+    let list_users = &document["paths"]["/users"]["get"];
+    assert_eq!(list_users["operationId"], "list_users");
+    assert_eq!(
+        list_users["responses"]["200"]["content"]["application/json"]["schema"]["type"],
+        "array"
+    );
+    assert_eq!(
+        list_users["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"],
+        "#/components/schemas/User"
     );
 
     let get_user_param = &document["paths"]["/users/{id}"]["get"]["parameters"][0];

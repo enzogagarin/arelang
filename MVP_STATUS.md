@@ -40,7 +40,8 @@ The smoke gate verifies:
 - `Result<T, E>` and `?` provide the MVP error flow
 - `Http.errors(ApiError)` maps typed domain errors to HTTP responses through enum variant status metadata
 - `Http.error_map` remains available as an explicit compatibility mapper
-- `model` declarations back the MVP in-memory `ctx.db.<collection>.insert/get` store
+- `model` declarations back the MVP in-memory `ctx.db.<collection>.insert/get/all` store
+- `List<T>` supports typed collection response contracts such as `returns List<User>`
 - declarative alias and field validations run at the HTTP boundary and are exported through `inspect` and OpenAPI
 
 ## Representative MVP Syntax
@@ -72,10 +73,16 @@ fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<Us
     return user
 }
 
+fn list_users(ctx: Http.Context<AppState>) -> Result<List<User>, ApiError> {
+    let users = ctx.db.users.all()?
+    return users
+}
+
 service UsersApi(state: AppState) {
     use Http.errors(ApiError)
 
     post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users" -> list_users returns List<User> status 200
     get "/users/{id: UserId}" -> get_user returns User status 200
 }
 ```
@@ -87,7 +94,7 @@ These are intentionally outside the closed HTTP MVP:
 - native codegen
 - full package/module system
 - real database adapters and migrations
-- richer collection/query APIs
+- filtered/sorted/paginated collection query APIs beyond MVP `all()`
 - request-scope safety checking
 - full sandbox runtime
 - package registry

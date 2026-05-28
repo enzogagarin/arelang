@@ -678,11 +678,17 @@ impl TypeChecker<'_> {
     }
 
     fn is_response_payload_type(&self, ty: &TypeExpr) -> bool {
-        let TypeExpr::Path { path } = ty else {
-            return false;
-        };
-
-        path.segments.len() == 1 && self.is_known_response_payload_name(&path.segments[0])
+        match ty {
+            TypeExpr::Path { path } => {
+                path.segments.len() == 1 && self.is_known_response_payload_name(&path.segments[0])
+            }
+            TypeExpr::Generic { base, args, .. } => {
+                path_is(base, &["List"])
+                    && args.len() == 1
+                    && self.is_response_payload_type(&args[0])
+            }
+            TypeExpr::Option { inner, .. } => self.is_response_payload_type(inner),
+        }
     }
 
     fn is_known_response_payload_name(&self, name: &str) -> bool {
@@ -709,6 +715,14 @@ impl TypeChecker<'_> {
                     "Integer" | "Int" | "I64" | "U64" | "F64"
                 )
             }
+            BodyType::List(actual_inner) => match expected {
+                TypeExpr::Generic { base, args, .. }
+                    if path_is(base, &["List"]) && args.len() == 1 =>
+                {
+                    self.response_body_accepts(&args[0], actual_inner)
+                }
+                _ => false,
+            },
             BodyType::Unit
             | BodyType::HttpRequest
             | BodyType::HttpContext(_)

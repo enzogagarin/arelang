@@ -548,6 +548,11 @@ fn accepts_model_db_calls_for_non_user_collections() {
                 return post
             }
 
+            fn list_posts(ctx: Http.Context<AppState>) -> Result<List<Post>, ApiError> {
+                let posts = ctx.db.posts.all()?
+                return posts
+            }
+
             fn map_error(err: ApiError) -> Http.Response {
                 return Http.Response.error(500, { "error": "failed" })
             }
@@ -555,11 +560,71 @@ fn accepts_model_db_calls_for_non_user_collections() {
             service Api(state: AppState) {
                 use Http.error_map(map_error)
                 post "/posts" body CreatePostInput -> create_post returns Post status 201
+                get "/posts" -> list_posts returns List<Post> status 200
             }
         "#;
 
     let diagnostics = diagnostics_for("test.are", source);
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn rejects_invalid_list_arity() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            struct User { name: String }
+
+            fn list_users(ctx: Http.Context<AppState>) -> List<User, User> {
+                return { "name": "Ada" }
+            }
+
+            service Api(state: AppState) {
+                get "/users" -> list_users returns List<User, User> status 200
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 4, "{diagnostics:#?}");
+    assert!(diagnostics.iter().all(|diagnostic| {
+        matches!(
+            diagnostic.code.as_str(),
+            "E_TYPE_0002" | "E_BODY_0009" | "E_HTTP_0420"
+        )
+    }));
+}
+
+#[test]
+fn rejects_named_arguments_on_model_collection_calls() {
+    let source = r#"
+            use std.http as Http
+
+            struct AppState {}
+            model User {
+                id: U64 primary
+                name: String
+            }
+            enum ApiError { Failed }
+
+            fn list_users(ctx: Http.Context<AppState>) -> Result<List<User>, ApiError> {
+                let users = ctx.db.users.all(limit: 10)?
+                return users
+            }
+
+            fn map_error(err: ApiError) -> Http.Response {
+                return Http.Response.error(500, { "error": "failed" })
+            }
+
+            service Api(state: AppState) {
+                use Http.error_map(map_error)
+                get "/users" -> list_users returns List<User> status 200
+            }
+        "#;
+
+    let diagnostics = diagnostics_for("test.are", source);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].code, "E_BODY_0015");
 }
 
 #[test]

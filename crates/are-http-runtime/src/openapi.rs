@@ -403,6 +403,13 @@ fn type_schema(type_name: &str) -> Value {
         });
     }
 
+    if let Some(inner) = list_inner(type_name) {
+        return json!({
+            "type": "array",
+            "items": type_schema(inner),
+        });
+    }
+
     match type_name {
         "String" | "Text" => string_schema(),
         "Bool" => json!({ "type": "boolean" }),
@@ -439,6 +446,13 @@ fn optional_inner(type_name: &str) -> Option<&str> {
             .strip_suffix('>')
             .map(str::trim)
     })
+}
+
+fn list_inner(type_name: &str) -> Option<&str> {
+    type_name
+        .strip_prefix("List<")?
+        .strip_suffix('>')
+        .map(str::trim)
 }
 
 fn is_ref_name(type_name: &str) -> bool {

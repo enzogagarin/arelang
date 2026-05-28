@@ -69,6 +69,25 @@ impl RuntimeSchemas {
         value: &serde_json::Value,
         invalid_code: &str,
     ) -> Result<(), String> {
+        if let Some(inner) = optional_inner(type_name) {
+            if value.is_null() {
+                return Ok(());
+            }
+
+            return self.validate_value_as(inner, value, invalid_code);
+        }
+
+        if let Some(inner) = list_inner(type_name) {
+            let Some(items) = value.as_array() else {
+                return Err(invalid_code.to_string());
+            };
+
+            for item in items {
+                self.validate_value_as(inner, item, invalid_code)?;
+            }
+            return Ok(());
+        }
+
         if let Some(alias) = self.aliases.get(type_name) {
             self.validate_type_expr_as(&alias.aliased, value, invalid_code)?;
             Self::validate_rules(&alias.validations, value, invalid_code)?;
@@ -291,6 +310,17 @@ impl RuntimeSchemas {
                     return self.validate_type_expr_as(&args[0], value, invalid_code);
                 }
 
+                if path_is(base, &["List"]) && args.len() == 1 {
+                    let Some(items) = value.as_array() else {
+                        return Err(invalid_code.to_string());
+                    };
+
+                    for item in items {
+                        self.validate_type_expr_as(&args[0], item, invalid_code)?;
+                    }
+                    return Ok(());
+                }
+
                 Ok(())
             }
             TypeExpr::Option { inner, .. } => {
@@ -464,6 +494,22 @@ pub(crate) fn type_expr_is_optional(ty: &TypeExpr) -> bool {
         TypeExpr::Generic { base, .. } => path_is(base, &["Option"]),
         TypeExpr::Path { .. } => false,
     }
+}
+
+fn optional_inner(type_name: &str) -> Option<&str> {
+    type_name.strip_suffix('?').map(str::trim).or_else(|| {
+        type_name
+            .strip_prefix("Option<")?
+            .strip_suffix('>')
+            .map(str::trim)
+    })
+}
+
+fn list_inner(type_name: &str) -> Option<&str> {
+    type_name
+        .strip_prefix("List<")?
+        .strip_suffix('>')
+        .map(str::trim)
 }
 
 fn path_is(path: &are_ast::Path, expected: &[&str]) -> bool {

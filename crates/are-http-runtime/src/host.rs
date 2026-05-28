@@ -124,4 +124,12 @@ impl Host for RuntimeHost<'_> {
 
         self.state.get_model(collection, &id)
     }
+
+    fn list_model(&mut self, collection: &str) -> Result<serde_json::Value, InterpretError> {
+        self.schemas
+            .model_for_collection(collection)
+            .ok_or_else(|| InterpretError::UnsupportedExpression(format!("ctx.db.{collection}")))?;
+
+        Ok(self.state.list_model(collection))
+    }
 }

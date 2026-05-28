@@ -82,6 +82,13 @@ pub trait Host {
     ///
     /// Returns an error when the id is invalid or the value does not exist.
     fn get_model(&mut self, collection: &str, id: JsonValue) -> Result<JsonValue, InterpretError>;
+
+    /// Read all model-like JSON values from host state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the collection cannot be listed.
+    fn list_model(&mut self, collection: &str) -> Result<JsonValue, InterpretError>;
 }
 
 pub(crate) struct NoopHost;
@@ -141,6 +148,12 @@ impl Host for NoopHost {
     fn get_model(&mut self, collection: &str, _id: JsonValue) -> Result<JsonValue, InterpretError> {
         Err(InterpretError::UnsupportedExpression(format!(
             "ctx.db.{collection}.get"
+        )))
+    }
+
+    fn list_model(&mut self, collection: &str) -> Result<JsonValue, InterpretError> {
+        Err(InterpretError::UnsupportedExpression(format!(
+            "ctx.db.{collection}.all"
         )))
     }
 }

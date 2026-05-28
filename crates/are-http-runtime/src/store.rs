@@ -62,6 +62,23 @@ impl RuntimeState {
 
         Ok(record.clone())
     }
+
+    pub(crate) fn list_model(&self, collection: &str) -> serde_json::Value {
+        let inner = self.inner.lock().expect("runtime state lock poisoned");
+        let Some(store) = inner.stores.get(collection) else {
+            return serde_json::Value::Array(Vec::new());
+        };
+
+        let mut records = store.records.iter().collect::<Vec<_>>();
+        records.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        serde_json::Value::Array(
+            records
+                .into_iter()
+                .map(|(_, record)| record.clone())
+                .collect(),
+        )
+    }
 }
 
 fn build_model_record(

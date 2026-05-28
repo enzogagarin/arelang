@@ -64,6 +64,11 @@ fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<Us
     return user
 }
 
+fn list_users(ctx: Http.Context<AppState>) -> Result<List<User>, ApiError> {
+    let users = ctx.db.users.all()?
+    return users
+}
+
 fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<SearchUsersResponse, ApiError> {
     return { "email": query.email }
 }
@@ -86,6 +91,7 @@ service UsersApi(state: AppState) {
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users" -> list_users returns List<User> status 200
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200

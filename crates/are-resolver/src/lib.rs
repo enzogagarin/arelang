@@ -393,6 +393,7 @@ fn is_builtin_type(name: &str) -> bool {
             | "F64"
             | "Result"
             | "Option"
+            | "List"
     )
 }
 

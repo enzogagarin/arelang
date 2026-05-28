@@ -70,6 +70,7 @@ Output:
 - function signature checks: done for MVP handler and local-call signatures
 - `Result<T, E>` arity checks: done
 - `Option<T>` arity checks: done
+- `List<T>` arity checks and response contract checks: done after HTTP MVP
 - HTTP route handler signature checks: done
 - HTTP error mapper checks: done
 - declarative HTTP error contract checks through `Http.errors(ApiError)`: done after HTTP MVP
@@ -83,7 +84,7 @@ Output:
 - declarative domain alias validation checks for `validate.email` and `validate.length`: done after HTTP MVP
 - route response and success status contract checks: done
 - route handlers returning domain payloads from `returns` contracts: done
-- model database call checks for `ctx.db.<collection>.insert/get`: done for MVP model collections; broader query APIs deferred
+- model database call checks for `ctx.db.<collection>.insert/get/all`: done for MVP model collections; richer query APIs deferred
 - typed path parameter contract checks: done
 - function body checker module split: done
 
@@ -119,7 +120,7 @@ Output:
 - local server runner: done for `users_api`
 - request/response runtime types: done for the MVP HTTP boundary
 - JSON decode/encode MVP: done for local structs/models with primitive fields
-- model-backed in-memory store: done for primary-key `insert/get`
+- model-backed in-memory store: done for primary-key `insert/get` and collection `all`
 - route params: done for legacy `:id` and typed `{id: UserId}` forms
 - route body contracts: done for `body Payload`
 - route query contracts: done for `query Payload`
@@ -136,6 +137,7 @@ Definition of done:
 - `are run examples/users_api` starts a local HTTP server: done
 - `GET /health` returns `200`: done
 - `POST /users` creates an in-memory user: done
+- `GET /users` returns `List<User>` from the model-backed collection: done after HTTP MVP
 - `GET /users/{id: UserId}` returns that user or a typed error: done
 - canonical route contracts with method shorthand, typed path params, request body declarations, request query declarations, request headers declarations, and request cookies declarations: done
 - successful HTTP responses are validated against declared `returns` and `status` contracts: done
@@ -156,7 +158,7 @@ Output:
 - `are inspect` schema export: done for aliases, structs, models, enum variants, enum HTTP statuses, route error types, model collections, and primary/unique field metadata
 - `are inspect` field validation export: done for struct field validation metadata
 - `are inspect` alias validation export: done for domain primitive validation metadata
-- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, success/error responses, path/query/header/cookie params, alias and field validation constraints, declarative error contract responses, servers, component schemas, file output, and drift checks
+- `are openapi`: done for OpenAPI 3.1 JSON paths, request bodies, success/error responses including `List<T>` array schemas, path/query/header/cookie params, alias and field validation constraints, declarative error contract responses, servers, component schemas, file output, and drift checks
 - `are check --json`: done
 - diagnostic fix suggestions: done for MVP name, type, handler, mapper, field, and enum-variant diagnostics
 - source snippet diagnostics: done
@@ -176,6 +178,7 @@ Status: post-MVP started.
 Output:
 
 - declarative domain error contracts: done for HTTP status metadata and automatic error response mapping
+- typed collection responses: done for `List<T>` and `ctx.db.<collection>.all()`
 - request scope model
 - first arena/region checker
 - capability manifest checks: started for HTTP MVP listen/process/default-closed capabilities

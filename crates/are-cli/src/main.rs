@@ -234,6 +234,7 @@ fn create_project(
             println!(
                 "  curl -X POST http://{host}:{port}/users -H 'content-type: application/json' -d '{{\"email\":\"ada@example.com\",\"name\":\"Ada Lovelace\"}}'"
             );
+            println!("  curl http://{host}:{port}/users");
             println!("  curl 'http://{host}:{port}/users/search?email=ada%40example.com'");
             println!(
                 "  curl http://{host}:{port}/users/auth-check -H 'authorization: Bearer dev-token'"
@@ -889,6 +890,11 @@ fn create_user(ctx: Http.Context<AppState>, input: CreateUserInput) -> Result<Us
     return user
 }}
 
+fn list_users(ctx: Http.Context<AppState>) -> Result<List<User>, ApiError> {{
+    let users = ctx.db.users.all()?
+    return users
+}}
+
 fn search_users(ctx: Http.Context<AppState>, query: SearchUsersQuery) -> Result<SearchUsersResponse, ApiError> {{
     return {{ "email": query.email }}
 }}
@@ -911,6 +917,7 @@ service {service_name}(state: AppState) {{
 
     get "/health" -> health returns HealthResponse status 200
     post "/users" body CreateUserInput -> create_user returns User status 201
+    get "/users" -> list_users returns List<User> status 200
     get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200
     get "/users/auth-check" headers AuthHeaders -> auth_check returns AuthCheckResponse status 200
     get "/session" cookies SessionCookies -> current_session returns SessionResponse status 200
@@ -1087,6 +1094,7 @@ mod tests {
         let source = users_source("GeneratedUsersApi");
         assert!(source.contains("model User"));
         assert!(source.contains("fn create_user"));
+        assert!(source.contains("fn list_users"));
         assert!(source.contains("fn search_users"));
         assert!(source.contains("fn auth_check"));
         assert!(source.contains("fn current_session"));
@@ -1104,6 +1112,7 @@ mod tests {
         assert!(source.contains(
             r#"post "/users" body CreateUserInput -> create_user returns User status 201"#
         ));
+        assert!(source.contains(r#"get "/users" -> list_users returns List<User> status 200"#));
         assert!(source.contains(
             r#"get "/users/search" query SearchUsersQuery -> search_users returns SearchUsersResponse status 200"#
         ));

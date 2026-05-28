@@ -336,16 +336,23 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
         callee_name: &str,
         args: &[CallArg],
     ) -> Result<Value, InterpretError> {
-        let value = self.single_json_arg(callee_name, args)?;
         match db_call.operation {
-            DbOperation::Insert => self
-                .host
-                .insert_model(db_call.collection, value)
-                .map(Value::Json),
-            DbOperation::Get => self
-                .host
-                .get_model(db_call.collection, value)
-                .map(Value::Json),
+            DbOperation::Insert => {
+                let value = self.single_json_arg(callee_name, args)?;
+                self.host
+                    .insert_model(db_call.collection, value)
+                    .map(Value::Json)
+            }
+            DbOperation::Get => {
+                let value = self.single_json_arg(callee_name, args)?;
+                self.host
+                    .get_model(db_call.collection, value)
+                    .map(Value::Json)
+            }
+            DbOperation::All => {
+                Self::expect_arity(callee_name, args, 0)?;
+                self.host.list_model(db_call.collection).map(Value::Json)
+            }
         }
     }
 
@@ -544,8 +551,15 @@ impl<'a, H: Host, S: BuildHasher> Interpreter<'a, H, S> {
 fn type_expr_name(ty: &TypeExpr) -> Option<String> {
     match ty {
         TypeExpr::Path { path } => Some(path.segments.join(".")),
-        TypeExpr::Generic { base, .. } => Some(base.segments.join(".")),
-        TypeExpr::Option { inner, .. } => type_expr_name(inner),
+        TypeExpr::Generic { base, args, .. } => {
+            let args = args
+                .iter()
+                .filter_map(type_expr_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!("{}<{args}>", base.segments.join(".")))
+        }
+        TypeExpr::Option { inner, .. } => type_expr_name(inner).map(|inner| format!("{inner}?")),
     }
 }
 
@@ -690,6 +704,33 @@ mod tests {
                 "email": "ada@example.com",
                 "name": "Ada",
             }))
+        );
+    }
+
+    #[test]
+    fn interprets_list_users_flow_with_host_effects() {
+        let mut host = TestHost::new(r#"{"email":"ada@example.com","name":"Ada"}"#);
+
+        interpret_users_api_function("create_user", &mut host).expect("create_user runs");
+        host.request_body = r#"{"email":"grace@example.com","name":"Grace"}"#.to_string();
+        interpret_users_api_function("create_user", &mut host).expect("second create_user runs");
+
+        let value = interpret_users_api_function("list_users", &mut host).expect("list_users runs");
+
+        assert_eq!(
+            value,
+            Value::Json(serde_json::json!([
+                {
+                    "id": 1,
+                    "email": "ada@example.com",
+                    "name": "Ada",
+                },
+                {
+                    "id": 2,
+                    "email": "grace@example.com",
+                    "name": "Grace",
+                },
+            ]))
         );
     }
 
@@ -907,6 +948,21 @@ mod tests {
                 .get(&id)
                 .cloned()
                 .ok_or_else(|| InterpretError::raised_api_error("NotFound", Vec::new()))
+        }
+
+        fn list_model(&mut self, collection: &str) -> Result<serde_json::Value, InterpretError> {
+            if collection != "users" {
+                return Err(InterpretError::UnsupportedExpression(format!(
+                    "ctx.db.{collection}.all"
+                )));
+            }
+
+            let mut users = self.users.iter().collect::<Vec<_>>();
+            users.sort_by_key(|(id, _)| *id);
+
+            Ok(serde_json::Value::Array(
+                users.into_iter().map(|(_, user)| user.clone()).collect(),
+            ))
         }
     }
 

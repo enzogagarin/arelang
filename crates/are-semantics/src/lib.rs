@@ -34,6 +34,7 @@ impl Builtin {
 pub enum DbOperation {
     Insert,
     Get,
+    All,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +74,7 @@ pub fn db_call_by_callee(callee: &str) -> Option<DbCall<'_>> {
     let operation = match operation {
         "insert" => DbOperation::Insert,
         "get" => DbOperation::Get,
+        "all" => DbOperation::All,
         _ => return None,
     };
 
@@ -136,6 +138,9 @@ mod tests {
         let call = db_call_by_callee("ctx.db.users.insert").expect("db call");
         assert_eq!(call.collection, "users");
         assert_eq!(call.operation, DbOperation::Insert);
+        let call = db_call_by_callee("ctx.db.users.all").expect("db call");
+        assert_eq!(call.collection, "users");
+        assert_eq!(call.operation, DbOperation::All);
         assert!(db_call_by_callee("ctx.state.users.insert").is_none());
         assert_eq!(collection_name_for_model("User"), "users");
         assert_eq!(collection_name_for_model("BlogPost"), "blog_posts");

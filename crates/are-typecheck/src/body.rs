@@ -106,7 +106,10 @@ impl TypeChecker<'_> {
             TypeExpr::Generic { base, args, range } => {
                 let expected = if path_is(base, &["Result"]) {
                     Some(2)
-                } else if path_is(base, &["Option"]) || self.path_is_http(base, "Context") {
+                } else if path_is(base, &["Option"])
+                    || path_is(base, &["List"])
+                    || self.path_is_http(base, "Context")
+                {
                     Some(1)
                 } else {
                     None
@@ -159,6 +162,7 @@ pub(super) enum BodyType {
     HttpRequest,
     HttpContext(String),
     HttpResponse,
+    List(Box<BodyType>),
     Result {
         ok: Box<BodyType>,
         error: Box<BodyType>,
@@ -192,6 +196,7 @@ impl BodyType {
             Self::HttpRequest => "Http.Request".to_string(),
             Self::HttpContext(state) => format!("Http.Context<{state}>"),
             Self::HttpResponse => "Http.Response".to_string(),
+            Self::List(inner) => format!("List<{}>", inner.display()),
             Self::Result { ok, error } => {
                 format!("Result<{}, {}>", ok.display(), error.display())
             }
@@ -683,10 +688,25 @@ impl BodyChecker<'_> {
             return BodyType::Unknown;
         };
 
-        self.expect_positional_arity(callee_name, args, 1, range);
-        self.check_positional_arg(args, 0);
+        for arg in args.iter().filter(|arg| arg.label.is_some()) {
+            self.error(
+                "E_BODY_0015",
+                arg.range,
+                format!("`{callee_name}` does not accept named arguments"),
+                "model database calls use positional arguments only",
+            );
+        }
+
         match db_call.operation {
-            DbOperation::Insert | DbOperation::Get => self.result_type(BodyType::Named(model_name)),
+            DbOperation::Insert | DbOperation::Get => {
+                self.expect_positional_arity(callee_name, args, 1, range);
+                self.check_positional_arg(args, 0);
+                self.result_type(BodyType::Named(model_name))
+            }
+            DbOperation::All => {
+                self.expect_positional_arity(callee_name, args, 0, range);
+                self.result_type(BodyType::List(Box::new(BodyType::Named(model_name))))
+            }
         }
     }
 
@@ -1012,6 +1032,10 @@ impl BodyChecker<'_> {
             return true;
         }
 
+        if let (BodyType::List(expected_inner), BodyType::List(actual_inner)) = (expected, actual) {
+            return self.return_accepts(expected_inner, actual_inner);
+        }
+
         match expected {
             BodyType::Result { ok, .. } => {
                 same_body_type(ok, actual) || self.named_payload_accepts_object(ok, actual)
@@ -1262,6 +1286,10 @@ fn body_type_from_type_expr(ty: &TypeExpr, http_aliases: &HashSet<String>) -> Bo
                 };
             }
 
+            if path_is(base, &["List"]) && args.len() == 1 {
+                return BodyType::List(Box::new(body_type_from_type_expr(&args[0], http_aliases)));
+            }
+
             if base.segments.len() == 2
                 && http_aliases.contains(&base.segments[0])
                 && base.segments[1] == "Context"
@@ -1302,6 +1330,7 @@ fn same_body_type(left: &BodyType, right: &BodyType) -> bool {
         | (BodyType::HttpResponse, BodyType::HttpResponse) => true,
         (BodyType::Named(left), BodyType::Named(right))
         | (BodyType::HttpContext(left), BodyType::HttpContext(right)) => left == right,
+        (BodyType::List(left), BodyType::List(right)) => same_body_type(left, right),
         (
             BodyType::Result {
                 ok: left_ok,

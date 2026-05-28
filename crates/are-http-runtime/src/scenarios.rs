@@ -75,6 +75,17 @@ pub(crate) fn test_users_scenario(
     expect_json_string(&created, "email", "ada@example.com", "POST /users")?;
     checks.push("POST /users creates a user with 201".to_string());
 
+    let listed = runtime_response(
+        &state,
+        &prepared.contracts,
+        &prepared.functions,
+        &RuntimeRequest::new(Method::Get, "/users", ""),
+    );
+    expect_status(&listed, 200, "GET /users")?;
+    expect_json_array_len(&listed, 1, "GET /users")?;
+    expect_json_array_string(&listed, 0, "email", "ada@example.com", "GET /users")?;
+    checks.push("GET /users lists persisted users".to_string());
+
     let searched = runtime_response(
         &state,
         &prepared.contracts,
@@ -188,6 +199,49 @@ fn expect_json_bool(
 
     Err(RuntimeError::Test(format!(
         "{label} expected JSON field `{field}` to be `{expected}`, got {}",
+        response.body
+    )))
+}
+
+fn expect_json_array_len(
+    response: &RuntimeResponse,
+    expected: usize,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response
+        .body
+        .as_array()
+        .is_some_and(|items| items.len() == expected)
+    {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected JSON array length `{expected}`, got {}",
+        response.body
+    )))
+}
+
+fn expect_json_array_string(
+    response: &RuntimeResponse,
+    index: usize,
+    field: &str,
+    expected: &str,
+    label: &str,
+) -> Result<(), RuntimeError> {
+    if response
+        .body
+        .as_array()
+        .and_then(|items| items.get(index))
+        .and_then(|item| item.get(field))
+        .and_then(serde_json::Value::as_str)
+        == Some(expected)
+    {
+        return Ok(());
+    }
+
+    Err(RuntimeError::Test(format!(
+        "{label} expected JSON array item {index} field `{field}` to be `{expected}`, got {}",
         response.body
     )))
 }

@@ -104,6 +104,12 @@ assert_users_api_flow() {
     assert_file_contains "$TMP_DIR/${label}_created_user.json" '"id":1' "$label create user response"
     assert_file_contains "$TMP_DIR/${label}_created_user.json" '"email":"ada@example.com"' "$label create user response"
 
+    local list_status
+    list_status="$(curl -sS -o "$TMP_DIR/${label}_list_users.json" -w '%{http_code}' "$base_url/users")"
+    assert_eq "$list_status" "200" "$label list users HTTP status"
+    assert_file_contains "$TMP_DIR/${label}_list_users.json" '"email":"ada@example.com"' "$label list users response"
+    assert_file_contains "$TMP_DIR/${label}_list_users.json" '"name":"Ada Lovelace"' "$label list users response"
+
     local search_status
     search_status="$(curl -sS -o "$TMP_DIR/${label}_search_user.json" -w '%{http_code}' "$base_url/users/search?email=ada%40example.com")"
     assert_eq "$search_status" "200" "$label search users HTTP status"
@@ -157,9 +163,11 @@ assert_file_contains "$TMP_DIR/users_inspect.json" '"collection": "users"' "user
 assert_file_contains "$TMP_DIR/users_inspect.json" '"primary": true' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"error_contract": "ApiError"' "users inspect contract"
 assert_file_contains "$TMP_DIR/users_inspect.json" '"error_type": "ApiError"' "users inspect contract"
+assert_file_contains "$TMP_DIR/users_inspect.json" '"response_type": "List<User>"' "users inspect contract"
 run "$ROOT_DIR/are" openapi "$ROOT_DIR/examples/users_api" --output "$TMP_DIR/users_openapi.json"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"openapi": "3.1.0"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/{id}"' "users OpenAPI document"
+assert_file_contains "$TMP_DIR/users_openapi.json" '"type": "array"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/search"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"in": "query"' "users OpenAPI document"
 assert_file_contains "$TMP_DIR/users_openapi.json" '"/users/auth-check"' "users OpenAPI document"
